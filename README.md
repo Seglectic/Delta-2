@@ -9,15 +9,17 @@ I do most of my work on a Macbook and this script is simply an attempt to recrea
 ### ToDo
 - Add more bindings. This script is largely incomplete due to mostly using the Macbook. As I use my PC more this script will inevitably grow.
 - Make deployable via a [DuckyScript™️](https://docs.hak5.org/hak5-usb-rubber-ducky/duckyscript-tm-quick-reference) that will clone this repo, deploy itself and intercept Caps Lock keypresses as F20, so you'll never be too far from your own rapid workflows.
-	-  Self destruct keybind to delete the portable install and shutdown so you can use your commands on a friend's system. 
--  Intercept the Caps-Lock key and output F20 or simply also trigger by Caps-Lock. Whichever is most reliable and flexible.
+	- Self destruct keybind to delete the portable install and shutdown so you can use your commands on a friend's system.
+ 	- Bundle preconfigured portable [AltDrag](https://stefansundin.github.io/altdrag/) to enable 𝚫+Tab workflow for easy window dragging. 
+-  Intercept the stock Caps-Lock key and output F20 or simply also trigger by Caps-Lock. Whichever is most reliable and flexible.
 ## On rotary encoders:
-I like having a rotary encoder knob and find they're better on the right side of the board for
+I like having a rotary encoder knob and find they're better on the rightmost side of the board for
 - Faster / easier access when your hand is on a mouse
 - Ability to hit standard modifier keys (ctrl,win,alt,shift) with left hand at the same time making multifunction knob workflows possible / ergonomic.
-Because of this I've adopted the convention that turning the knob right (clockwise) is "down" since the portion of the knob that you touch moves downward with your right hand. (Think of which way your hand moves if you grabbed and turned a steering wheel with your right hand).
-On my boards:
-- Encoder left == F16 
-- Encoder right == F17
+Because of this I've adopted the convention that turning the knob right (clockwise) is "down" since the portion of the knob that you touch moves downward with your right hand. (Think of which way your hand goes if you grabbed and turned a steering to wheel to the right with your right hand).
+My config defines the knob as:
+- Encoder left   == F16 
+- Encoder right  == F17
+- Encoder button == F18
 ## On mousing:
 As much as I like navigating interfaces with the keyboard alone, using a mouse is a necessary evil for many tasks; be it browsing the web or navigating file browsers. That's why you'll find that you can use most of the core keybinds with just your left hand, allowing you to leave your right hand free to use a mouse.
