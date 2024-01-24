@@ -247,6 +247,7 @@ F20 & g::{
   }
 }
 
+
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               Windows Media Controls                                               │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -261,6 +262,7 @@ F20 & g::{
   Send "{Volume_Up}"
   return
 }
+
 
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                            General App Opening Hotkeys                                             │
@@ -291,10 +293,6 @@ F20 & z::{
 }
 
 
-
-
-
-
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               AltDrag Key Processing                                               │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -314,25 +312,24 @@ F20 & z::{
 ; │                                                   Script Reload                                                    │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 F20 & BackSpace::{
-  ; Play sound in local folder
-  SoundPlay A_ScriptDir "\deltaMedia\reload.wav"
-  TrayTip "Reloaded", "Delta 2", 4 	; Traytip: https://www.autohotkey.com/docs/v2/lib/TrayTip.htm
-  ; Run timer that reloads after 1 second
-  SetTimer Reload, 1000
+  SoundPlay A_ScriptDir "\deltaMedia\reload.wav" ; Play sound in local folder
+  TrayTip "Reloaded", "Delta 2", 4 	             ; Traytip: https://www.autohotkey.com/docs/v2/lib/TrayTip.htm
+  SetTimer Reload, 1000                          ; Reload script in 1 second (allows time for traytip)
 }
 
-; Delta + Backslash to open this script in VSCode using scriptdir and make the window active
+; Delta + Backslash 
+; Opens this script in VSCode and make the window active
 F20 & \::{
-  Run "C:\Program Files\Microsoft VS Code\Code.exe " . A_ScriptDir
+  Run "C:\Program Files\Microsoft VS Code\Code.exe " . A_ScriptDir 
   ; WinWaitActive "Code.exe"
   ; WinActivate "Code.exe"
 }
 
-; Delta + Right Square Bracket to open scriptdir in explorer:
+; Delta + Right Square Bracket
+; Opens this script in Windows explorer.
 F20 & ]::{
   Run "explorer.exe " . A_ScriptDir
 }
 
-
-
-TraySetIcon A_ScriptDir . "\deltaMedia\delta.ico", 1 ,false ; Set tray icon to delta.ico https://www.autohotkey.com/docs/v2/lib/TraySetIcon.ht
+; Set tray icon to delta.ico (https://www.autohotkey.com/docs/v2/lib/TraySetIcon.htm)
+TraySetIcon A_ScriptDir . "\deltaMedia\delta.ico", 1 ,false 
