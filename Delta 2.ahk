@@ -5,45 +5,85 @@
 ;                                   ██║  ██║██╔══╝  ██║     ██║   ██╔══██║    ██╔═══╝ 
 ;                                   ██████╔╝███████╗███████╗██║   ██║  ██║    ███████╗
 ;                                   ╚═════╝ ╚══════╝╚══════╝╚═╝   ╚═╝  ╚═╝    ╚══════╝
-
 ; ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-; │                                   Windows AutoHotkey macro and keybind script.                                    │
-; │                                             - Seglectic Systems 2023                                              │
-; |                                                                                                                   |
-; |                  Doc reference: https://www.autohotkey.com/docs/v2/Hotkeys.htm                                    |
+; │                                    Windows AutoHotkey macro and keybind script                                    │
+; │                                                       - Seglectic Systems 2023                                    │
+; │                                                                                                                   │
+; |                         AHK Doc reference: https://www.autohotkey.com/docs/v2/Hotkeys.htm                         |
 ; ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
+; Module testing stuff
+#include "./modules/discord.ahk"
 
 ; ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               App Specific Hotkeys                                                │
 ; ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                                 Final Fantasy XIV                                                  │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 FFXIV := "FINAL FANTASY XIV" ; FFXIV window name variable for checking if it's active
 
+; ╭─────────────────────────────╮
+; │   F-Keys to Chat Channels   │
+; ╰─────────────────────────────╯
+; F1::{ ; F1 = Say Chat (s)
+;   if WinActive(FFXIV) {
+;     Send "{Enter}"  ; Send enter to open chat
+;     Send "{/}" ; Send /
+;     Sleep 20
+;     Send "s" ; Send s
+;     Sleep 20
+;     Send "{Enter}" ; Send enter to send message
+;     return
+;   }	
+; }
 
+; F2::{ ; F2 = Party Chat (p)
+;   if WinActive(FFXIV) {
+;     Send "{Enter}"  ; Send enter to open chat
+;     Send "{/}" ; Send /
+;     Sleep 20
+;     Send "p" ; Send p
+;     Sleep 20
+;     Send "{Enter}" ; Send enter to send message
+;     return
+;   }	
+; }
 
-; Generic chat send function
-SendChat(message) {
-  if WinActive(FFXIV) {
-    Send "{Enter}"  ; Send enter to open chat
-    Sleep 20        ; Wait for chat to open
-    Send message    ; Send message
-    Sleep 50        ; Wait for message to send
-    Send "{Enter}"  ; Send enter to send message
-    return
-  }	
-}
+; F3::{ ; F3 = Free Company Chat (fc)
+;   if WinActive(FFXIV) {
+;     Send "{Enter}"  ; Send enter to open chat
+;     Send "{/}" ; Send /
+;     Sleep 20
+;     Send "fc" ; Send fc
+;     Sleep 20
+;     Send "{Enter}" ; Send enter to send message
+;     return
+;   }	
+; }
+
+; F4::{  ; F4 = Linkshell 1 Chat (l1)
+;   if WinActive(FFXIV) {
+;     Send "{Enter}"  ; Send enter to open chat
+;     Send "{/}" ; Send /
+;     Sleep 20
+;     Send "l1" ; Send l1
+;     Sleep 20
+;     Send "{Enter}" ; Send enter to send message
+;     return
+;   }	
+; }
+
 
 ; ╭──────────────────────────────────╮
 ; │  Ride Pillion Keybinds           │
 ; │  Targets the nearest player      │
 ; │  and sends /ridepillion <t> 1-3  │
 ; ╰──────────────────────────────────╯
-; //TODO - Use the above SendChat function to send commands instead
-Numpad1::{                    ; /ridepillion1
+; //TODO - Minimize amount of sleeps and sends
+; //TODO - Create a reusable function with parameter for seat 
+$Numpad1::{                    ; /ridepillion1
   if WinActive(FFXIV) {
     Send "{NumpadSub}"        ; Send numpadminus to activate nearest PC keybind
     Sleep 20
@@ -54,12 +94,14 @@ Numpad1::{                    ; /ridepillion1
     Send "ridepillion <t> 1"  ; Send ridepillion1
     Sleep 50
     Send "{Enter}"            ; Send enter to send message
+  }else{
+    Send "{Numpad1}"          ; Send numpad1
   }
   return
 }
 
 ; Numpad 2 = Target Nearest PC, then /ridepillion2
-Numpad2::{
+$Numpad2::{
   if WinActive(FFXIV) {
     Send "{NumpadSub}"  ; Send numpadminus to activate nearest PC keybind
     Sleep 20
@@ -70,12 +112,14 @@ Numpad2::{
     Send "ridepillion <t> 2" ; Send 
     Sleep 50
     Send "{Enter}" ; Send enter to send message
-    return
-  }	
+  }else{
+    Send "{Numpad2}"  ; Send numpad2
+  }
+  return
 }
 
 ; Numpad 3 = Target Nearest PC, then /ridepillion3
-Numpad3::{
+$Numpad3::{
   if WinActive(FFXIV) {
     Send "{NumpadSub}"  ; Send numpadminus to activate nearest PC keybind
     Sleep 20
@@ -86,12 +130,14 @@ Numpad3::{
     Send "ridepillion <t> 3" ; Send ridepillion1
     Sleep 50
     Send "{Enter}" ; Send enter to send message
-    return
-  }	
+  }	else{
+    Send "{Numpad3}"  ; Send numpad3
+  }
+  return
 }
 
 ; Numpad 4 = Target Nearest PC, then /ridepillion4
-Numpad4::{
+$Numpad4::{
   if WinActive(FFXIV) {
     Send "{NumpadSub}"  ; Send numpadminus to activate nearest PC keybind
     Sleep 20
@@ -102,71 +148,26 @@ Numpad4::{
     Send "ridepillion <t> 4" ; Send ridepillion1
     Sleep 50
     Send "{Enter}" ; Send enter to send message
-    return
-  }	
-}
-
-;Numpad Period = To reload the GentleFix PS5 controller vibration plugin
-NumpadDot::{
-  if WinActive(FFXIV) {
-    Send "{Enter}"  ; Send enter to open chat
-    Sleep 20
-    Send "/gentle r" ; Send gentle r
-    Sleep 50
-    Send "{Enter}" ; Send enter to send message
-    return
-  }	
-}
-
-
-;  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-;  │                                                        Discord                                                     │
-;  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-; //TODO - Alt+; and Win+; to open the Emoji and GIF picker respectively
-; //TODO - Shift+Knob Left/Right to go up/down a Server
-; //FIXME - Upon first boot, Discord is not properly shown when activation hotkey pressed (Window is black for some reason)
-
-Discord := "Discord"                                                                                        ; Discord window name
-DiscordPath := "C:\Users\" . A_UserName . "\AppData\Local\Discord\Update.exe --processStart Discord.exe"    ; Discord path (should be universal on windows)
-
-; Activate the discord window when pressing F19 or pressing Delta + R
-F20 & r::
-F19::
-{
-  if WinActive(Discord) {
-    WinHide Discord
-    return
-  } else{
-    try{
-      WinActivate Discord ; Attempt to activate window (if it's shown but inactive)
-    } catch{
-      try{
-        WinShow Discord ; Otherwise attempt to show window (if it's hidden)
-        WinActivate Discord ; And activate it
-      } catch{
-        ; If all else fails, run DiscordPath and activate it
-        RunWait DiscordPath
-        WinWaitActive Discord
-      }
-    }
-    return
+  }else{
+    Send "{Numpad4}"  ; Send numpad4
   }
+  return
 }
 
-; Rotary Encoder Left for Discord Previous Channel / DM
-F16::{
-  if WinActive(Discord) {
-    Send "!{Up}"
-    return
-  }	
-}
-
-; Rotary Encoder Right for Discord Next Channel / DM
-F17::{
-  if WinActive(Discord) {
-    Send "!{Down}"
-    return
-  }	
+;Numpad Period key to send "/gentle r" for fixing PS5 controller vibration
+$NumpadDot::{
+	if WinActive(FFXIV) {
+		Send "{Enter}"  ; Send enter to open chat
+		Sleep 20
+		; Send "{/}" ; Send /
+		; Sleep 20
+		Send "/gentle r" ; Send gentle r
+		Sleep 50
+		Send "{Enter}" ; Send enter to send message
+	}else{
+    Send "{NumpadDot}"  ; Send period key
+  }
+  return
 }
 
 
@@ -174,6 +175,7 @@ F17::{
 ; │                                                    Delta + WASD                                                    │
 ; │                                                  Window Movement                                                   │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 
 ; Fullscreen current window with Delta + W
 F20 & w::{
@@ -217,8 +219,6 @@ F20 & e::{
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                              Windows Explorer Hotkeys                                              │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-; //FIXME - Explorer windows currently not coming into foreground focus when workflows are run
-
 ; Open Downloads folder with Delta + F
 F20 & f::{
   run "C:\Users\" . A_UserName . "\Downloads"
@@ -234,7 +234,6 @@ F20 & g::{
 }
 
 ; Open current Windows Explorer folder in VSCode with Alt+Shift+C
-; //FIXME - Unreliable, frequently doesn't properly copy path
 !+c::{
   if WinActive("ahk_exe explorer.exe") {
     ; Disable user input for a moment
@@ -247,6 +246,12 @@ F20 & g::{
   }
 }
 
+; Open the Game Captures Folder with Delta + H
+F20 & h::{
+  run "S:\Video\Recordings\_Game\Captures"
+  ; WinWaitActive "S:\"
+  ; WinActivate "S:\"
+}
 
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               Windows Media Controls                                               │
@@ -262,7 +267,6 @@ F20 & g::{
   Send "{Volume_Up}"
   return
 }
-
 
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                            General App Opening Hotkeys                                             │
@@ -293,6 +297,10 @@ F20 & z::{
 }
 
 
+
+
+
+
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               AltDrag Key Processing                                               │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -308,28 +316,32 @@ F20 & z::{
 }
 
 
+; //Startup
+; Play Sound
+; SoundPlay A_ScriptDir "\media\Kick.wav"
+SoundPlay A_ScriptDir "\media\reload.wav"
+
+
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                                   Script Reload                                                    │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 F20 & BackSpace::{
-  SoundPlay A_ScriptDir "\deltaMedia\reload.wav" ; Play sound in local folder
-  TrayTip "Reloaded", "Delta 2", 4 	             ; Traytip: https://www.autohotkey.com/docs/v2/lib/TrayTip.htm
-  SetTimer Reload, 1000                          ; Reload script in 1 second (allows time for traytip)
+  ; Play sound in local folder
+  TrayTip "Reloaded", "Delta 2", 4 	; Traytip: https://www.autohotkey.com/docs/v2/lib/TrayTip.htm
+  ; Run timer that reloads after 1 second
+  SetTimer Reload, 400
 }
 
-; Delta + Backslash 
-; Opens this script in VSCode and make the window active
+; Delta + Backslash to open this script in VSCode using scriptdir and make the window active
 F20 & \::{
-  Run "C:\Program Files\Microsoft VS Code\Code.exe " . A_ScriptDir 
+  Run "C:\Program Files\Microsoft VS Code\Code.exe " . A_ScriptDir
   ; WinWaitActive "Code.exe"
   ; WinActivate "Code.exe"
 }
 
-; Delta + Right Square Bracket
-; Opens this script in Windows explorer.
+; Delta + Right Square Bracket to open scriptdir in explorer:
 F20 & ]::{
-  Run "explorer.exe " . A_ScriptDir
+	Run "explorer.exe " . A_ScriptDir
 }
 
-; Set tray icon to delta.ico (https://www.autohotkey.com/docs/v2/lib/TraySetIcon.htm)
-TraySetIcon A_ScriptDir . "\deltaMedia\delta.ico", 1 ,false 
+TraySetIcon A_ScriptDir . "\media\delta.ico", 1 ,false ; Set tray icon to delta.ico https://www.autohotkey.com/docs/v2/lib/TraySetIcon.ht
