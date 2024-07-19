@@ -13,6 +13,7 @@
 ; ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ; Module testing stuff
 #include "./modules/discord.ahk"
+#include "./modules/dispSwap.ahk"
 
 ; ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                               App Specific Hotkeys                                                │
@@ -23,57 +24,6 @@
 ; │                                                 Final Fantasy XIV                                                  │
 ; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 FFXIV := "FINAL FANTASY XIV" ; FFXIV window name variable for checking if it's active
-
-; ╭─────────────────────────────╮
-; │   F-Keys to Chat Channels   │
-; ╰─────────────────────────────╯
-; F1::{ ; F1 = Say Chat (s)
-;   if WinActive(FFXIV) {
-;     Send "{Enter}"  ; Send enter to open chat
-;     Send "{/}" ; Send /
-;     Sleep 20
-;     Send "s" ; Send s
-;     Sleep 20
-;     Send "{Enter}" ; Send enter to send message
-;     return
-;   }	
-; }
-
-; F2::{ ; F2 = Party Chat (p)
-;   if WinActive(FFXIV) {
-;     Send "{Enter}"  ; Send enter to open chat
-;     Send "{/}" ; Send /
-;     Sleep 20
-;     Send "p" ; Send p
-;     Sleep 20
-;     Send "{Enter}" ; Send enter to send message
-;     return
-;   }	
-; }
-
-; F3::{ ; F3 = Free Company Chat (fc)
-;   if WinActive(FFXIV) {
-;     Send "{Enter}"  ; Send enter to open chat
-;     Send "{/}" ; Send /
-;     Sleep 20
-;     Send "fc" ; Send fc
-;     Sleep 20
-;     Send "{Enter}" ; Send enter to send message
-;     return
-;   }	
-; }
-
-; F4::{  ; F4 = Linkshell 1 Chat (l1)
-;   if WinActive(FFXIV) {
-;     Send "{Enter}"  ; Send enter to open chat
-;     Send "{/}" ; Send /
-;     Sleep 20
-;     Send "l1" ; Send l1
-;     Sleep 20
-;     Send "{Enter}" ; Send enter to send message
-;     return
-;   }	
-; }
 
 
 ; ╭──────────────────────────────────╮
@@ -267,6 +217,21 @@ F20 & h::{
   Send "{Volume_Up}"
   return
 }
+
+; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+; │                                                Display Switching                                                   │
+; ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\
+  ; Switch to internal display (desktop monitor)
+  ; ^!Home:: {  ;Uncomment to switch to a sensible default for those without Delta/Numpad
+  F20 & NumpadSub:: {
+    Run "C:\Windows\System32\DisplaySwitch.exe /internal" 
+    }
+  
+  ; Switch to external display (TV)
+  ; ^!End:: {
+  F20 & NumpadMult:: {
+    Run "C:\Windows\System32\DisplaySwitch.exe /external"
+  }
 
 ; ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ; │                                            General App Opening Hotkeys                                             │
