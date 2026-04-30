@@ -96,14 +96,298 @@ function tileFixed(fw, fh) {
     };
 }
 
+function logDelta(message) {
+    print("DELTA: " + message);
+}
+
+var tileInsets = {
+    left: 2,
+    top: 4,
+    right: 4,
+    bottom: 4
+};
+
+function approx(a, b) {
+    return Math.abs(a - b) < 0.01;
+}
+
+function clearTiles(rootTile) {
+    while (rootTile.tiles.length > 0) {
+        rootTile.tiles[0].remove();
+    }
+}
+
+function splitHorizontal(rootTile) {
+    var candidates = [];
+    var i;
+    var value;
+    var label;
+
+    if (typeof KWin !== "undefined" && typeof KWin.Horizontal !== "undefined") {
+        candidates.push(["KWin.Horizontal", KWin.Horizontal]);
+    }
+    if (typeof Tile !== "undefined" && typeof Tile.Horizontal !== "undefined") {
+        candidates.push(["Tile.Horizontal", Tile.Horizontal]);
+    }
+    candidates.push(["numeric 0", 0]);
+    candidates.push(["numeric 1", 1]);
+    candidates.push(["numeric 2", 2]);
+
+    for (i = 0; i < candidates.length; ++i) {
+        label = candidates[i][0];
+        value = candidates[i][1];
+        clearTiles(rootTile);
+        rootTile.split(value);
+        logDelta("splitHorizontal: tried " + label + ", tiles=" + rootTile.tiles.length);
+        if (rootTile.tiles.length === 2) {
+            return true;
+        }
+    }
+
+    logDelta("splitHorizontal: no candidate produced 2 tiles");
+    return false;
+}
+
+function collectLeafWindows(tile, out) {
+    var i;
+    for (i = 0; i < tile.windows.length; ++i) {
+        if (out.indexOf(tile.windows[i]) === -1) {
+            out.push(tile.windows[i]);
+        }
+    }
+    for (i = 0; i < tile.tiles.length; ++i) {
+        collectLeafWindows(tile.tiles[i], out);
+    }
+}
+
+function ensureHalvesLayout(rootTile) {
+    if (rootTile.tiles.length === 2 &&
+        approx(rootTile.tiles[0].relativeGeometry.x, 0) &&
+        approx(rootTile.tiles[0].relativeGeometry.width, 0.5) &&
+        approx(rootTile.tiles[1].relativeGeometry.x, 0.5) &&
+        approx(rootTile.tiles[1].relativeGeometry.width, 0.5)) {
+        return true;
+    }
+
+    clearTiles(rootTile);
+    if (!splitHorizontal(rootTile)) {
+        return false;
+    }
+    logDelta("ensureHalvesLayout: after split tiles=" + rootTile.tiles.length);
+    if (!rootTile.tiles[0]) {
+        logDelta("ensureHalvesLayout: tiles[0] missing");
+        return false;
+    }
+    if (!rootTile.tiles[1]) {
+        logDelta("ensureHalvesLayout: tiles[1] missing");
+        return false;
+    }
+    rootTile.tiles[0].relativeGeometry = {
+        x: 0,
+        y: 0,
+        width: 0.5,
+        height: 1
+    };
+    rootTile.tiles[1].relativeGeometry = {
+        x: 0.5,
+        y: 0,
+        width: 0.5,
+        height: 1
+    };
+    logDelta(
+        "ensureHalvesLayout: tiles=" + rootTile.tiles.length +
+        " left=(" + rootTile.tiles[0].relativeGeometry.x + "," + rootTile.tiles[0].relativeGeometry.width + ")" +
+        " right=(" + rootTile.tiles[1].relativeGeometry.x + "," + rootTile.tiles[1].relativeGeometry.width + ")"
+    );
+    return rootTile.tiles.length === 2;
+}
+
+function layoutLeftWidth(layoutName) {
+    if (layoutName === "halves") {
+        return 0.5;
+    }
+    if (layoutName === "thirds_left") {
+        return 1 / 3;
+    }
+    if (layoutName === "thirds_right") {
+        return 2 / 3;
+    }
+    return -1;
+}
+
+function ensureTwoColumnLayout(rootTile, layoutName) {
+    var leftWidth = layoutLeftWidth(layoutName);
+    if (leftWidth < 0) {
+        logDelta("ensureTwoColumnLayout: unknown layout " + layoutName);
+        return false;
+    }
+
+    if (rootTile.tiles.length === 2 &&
+        approx(rootTile.tiles[0].relativeGeometry.x, 0) &&
+        approx(rootTile.tiles[0].relativeGeometry.width, leftWidth) &&
+        approx(rootTile.tiles[1].relativeGeometry.x, leftWidth) &&
+        approx(rootTile.tiles[1].relativeGeometry.width, 1 - leftWidth)) {
+        return true;
+    }
+
+    clearTiles(rootTile);
+    if (!splitHorizontal(rootTile)) {
+        return false;
+    }
+    logDelta("ensureTwoColumnLayout(" + layoutName + "): after split tiles=" + rootTile.tiles.length);
+    if (!rootTile.tiles[0] || !rootTile.tiles[1]) {
+        logDelta("ensureTwoColumnLayout(" + layoutName + "): missing tiles after split");
+        return false;
+    }
+    rootTile.tiles[0].relativeGeometry = {
+        x: 0,
+        y: 0,
+        width: leftWidth,
+        height: 1
+    };
+    rootTile.tiles[1].relativeGeometry = {
+        x: leftWidth,
+        y: 0,
+        width: 1 - leftWidth,
+        height: 1
+    };
+    logDelta(
+        "ensureTwoColumnLayout(" + layoutName + "): left=(" +
+        rootTile.tiles[0].relativeGeometry.x + "," + rootTile.tiles[0].relativeGeometry.width +
+        ") right=(" +
+        rootTile.tiles[1].relativeGeometry.x + "," + rootTile.tiles[1].relativeGeometry.width + ")"
+    );
+    return rootTile.tiles.length === 2;
+}
+
+function manageIntoTile(tile, window) {
+    var geom = null;
+    var area = null;
+    if (!tile || !window) {
+        logDelta("manageIntoTile: missing tile or window");
+        return;
+    }
+    if (typeof tile.manage === "function") {
+        logDelta("manageIntoTile: using tile.manage()");
+        tile.manage(window);
+    } else {
+        logDelta("manageIntoTile: using window.tile compatibility");
+        window.tile = tile;
+    }
+    if (typeof workspace.scheduleRearrange === "function") {
+        workspace.scheduleRearrange();
+        logDelta("manageIntoTile: called workspace.scheduleRearrange()");
+    } else if (typeof workspace.rearrange === "function") {
+        workspace.rearrange();
+        logDelta("manageIntoTile: called workspace.rearrange()");
+    }
+    if (window.tile) {
+        logDelta(
+            "manageIntoTile: window.tile now=(" +
+            window.tile.relativeGeometry.x + "," +
+            window.tile.relativeGeometry.width + ")"
+        );
+    } else {
+        logDelta("manageIntoTile: window.tile still null");
+    }
+    area = workspace.clientArea(KWin.MaximizeArea, window);
+    if (area && tile.relativeGeometry) {
+        geom = {
+            x: Math.round(area.x + area.width * tile.relativeGeometry.x) + tileInsets.left,
+            y: Math.round(area.y + area.height * tile.relativeGeometry.y) + tileInsets.top,
+            width: Math.round(area.width * tile.relativeGeometry.width) - tileInsets.left - tileInsets.right,
+            height: Math.round(area.height * tile.relativeGeometry.height) - tileInsets.top - tileInsets.bottom
+        };
+        logDelta(
+            "manageIntoTile: computed clientArea geometry=(" +
+            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
+        );
+        window.frameGeometry = {
+            x: geom.x,
+            y: geom.y,
+            width: geom.width,
+            height: geom.height
+        };
+        logDelta(
+            "manageIntoTile: requested frameGeometry=(" +
+            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
+        );
+    } else if (tile.absoluteGeometryInScreen) {
+        geom = tile.absoluteGeometryInScreen;
+        logDelta(
+            "manageIntoTile: fallback absoluteGeometryInScreen=(" +
+            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
+        );
+        window.frameGeometry = {
+            x: geom.x,
+            y: geom.y,
+            width: geom.width,
+            height: geom.height
+        };
+    } else {
+        logDelta("manageIntoTile: no usable tile geometry");
+    }
+}
+
+function tileIntoLayout(layoutName, side) {
+    var w = workspace.activeWindow;
+    var manager;
+    var rootTile;
+    var existing = [];
+    var slotIndex;
+    var otherIndex;
+    var i;
+    var otherWindow = null;
+
+    if (!w || !w.output) {
+        logDelta("tileIntoLayout(" + layoutName + "," + side + "): no active window or output");
+        return;
+    }
+
+    manager = workspace.tilingForScreen(w.output.name);
+    if (!manager || !manager.rootTile) {
+        logDelta("tileIntoLayout(" + layoutName + "," + side + "): no tile manager for " + w.output.name);
+        return;
+    }
+    rootTile = manager.rootTile;
+
+    collectLeafWindows(rootTile, existing);
+    if (!ensureTwoColumnLayout(rootTile, layoutName)) {
+        logDelta("tileIntoLayout(" + layoutName + "," + side + "): failed to build layout");
+        return;
+    }
+
+    slotIndex = side === "right" ? 1 : 0;
+    otherIndex = slotIndex === 0 ? 1 : 0;
+    logDelta("tileIntoLayout(" + layoutName + "," + side + "): slotIndex=" + slotIndex + " otherIndex=" + otherIndex);
+
+    for (i = 0; i < existing.length; ++i) {
+        if (existing[i] !== w) {
+            otherWindow = existing[i];
+            break;
+        }
+    }
+
+    if (otherWindow) {
+        logDelta("tileIntoLayout(" + layoutName + "," + side + "): leaving existing other window in place");
+    }
+
+    w.setMaximize(false, false);
+    manageIntoTile(rootTile.tiles[slotIndex], w);
+    logDelta("tileIntoLayout(" + layoutName + "," + side + "): assigned active window");
+}
+
 FUNCS
 
     while IFS='=' read -r id rest; do
         id="${id// /}"
         read -r key xf wf extra <<< "$rest"
-        local ku="${key^^}" kl="${key,,}"
+        local ku="$key" kl="${key,,}"
+        [[ ${#key} -eq 1 ]] && ku="${key^^}"
         if [[ "$xf" == "fixed" ]]; then
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tileFixed(${wf}, ${extra}); });"
+        elif [[ "$xf" == "tile" ]]; then
+            echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tileIntoLayout(\"${wf}\", \"${extra}\"); });"
         else
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tile(\"${kl}\", ${xf}, ${wf}); });"
         fi
@@ -139,6 +423,19 @@ cmd_apply() {
 cmd_reload() {
     echo "==> Reloading keyd..."
     _restart_keyd
+    echo "==> Reloading KWin script..."
+    _reload_kwin
+    echo "Done."
+}
+
+cmd_render_kwin() {
+    echo "==> Generating KWin script..."
+    mkdir -p "$(dirname "$KWIN_SCRIPT")"
+    generate_kwin > "$KWIN_SCRIPT"
+    echo "    wrote $KWIN_SCRIPT"
+}
+
+cmd_reload_kwin() {
     echo "==> Reloading KWin script..."
     _reload_kwin
     echo "Done."
@@ -180,12 +477,16 @@ case "${1:-help}" in
     setup)  cmd_setup  ;;
     apply)  cmd_apply  ;;
     reload) cmd_reload ;;
+    render-kwin) cmd_render_kwin ;;
+    reload-kwin) cmd_reload_kwin ;;
     status) cmd_status ;;
     *)
         echo "Usage: delta <command>"
         echo "  setup   — (once, with sudo) grants passwordless access to keyd config"
         echo "  apply   — regenerate configs from delta.conf and reload everything"
         echo "  reload  — reload keyd + KWin script without regenerating"
+        echo "  render-kwin — regenerate only the KWin script"
+        echo "  reload-kwin — reload only the KWin script"
         echo "  status  — show current state of all components"
         ;;
 esac

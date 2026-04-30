@@ -28,14 +28,29 @@ Right hand stays on mouse — all bindings are left-hand operable.
 | Shortcut   | Action                                                        |
 |------------|---------------------------------------------------------------|
 | Delta+W    | Fullscreen (full screen width × height)                       |
-| Delta+A    | Snap to left 2/3 of display (x=0, width=66.7%)               |
-| Delta+D    | Snap to right 2/3 of display (x=33.3%, width=66.7%)          |
-| Delta+Q    | Snap to left 1/3 of display (x=0, width=33.3%)               |
-| Delta+E    | Snap to right 1/3 of display (x=66.7%, width=33.3%)          |
+| Delta+A    | Tile to left 2/3 in a 2/3 + 1/3 KWin layout                  |
+| Delta+D    | Tile to right 2/3 in a 1/3 + 2/3 KWin layout                 |
+| Delta+Q    | Tile to left 1/3 in a 1/3 + 2/3 KWin layout                  |
+| Delta+E    | Tile to right 1/3 in a 2/3 + 1/3 KWin layout                 |
+| Delta+Left | Tile to left 1/2 in a 50/50 KWin layout                      |
+| Delta+Right| Tile to right 1/2 in a 50/50 KWin layout                     |
 | Delta+S    | Float at fixed 1024×768, centered on screen                   |
 
 These mirror the Windows/macOS Delta-2 workflow (github.com/Seglectic/Delta-2).
-KDE's built-in QuickTile can't do 2/3 or 1/3 widths — custom KWin script required.
+KDE's built-in QuickTile can't do 2/3 or 1/3 widths — custom KWin tiling script required.
+
+### v2 Working Notes
+
+- `Delta+Q/A/D/E/Left/Right` now use KWin's root tile tree plus a geometry fallback.
+- The working horizontal split enum in this scripting environment is numeric `1`.
+- Final placement is mapped through `workspace.clientArea(KWin.MaximizeArea, window)` rather than
+  full output geometry so panels/taskbars are respected.
+- A small inset is applied to better match KDE's drag-to-tile feel:
+  `left=2`, `top=4`, `right=4`, `bottom=4`
+- Repeated placement into the same tile does **not** automatically push the existing window into
+  the opposite tile. Current behavior leaves the existing window in place so windows can stack in
+  the same zone if desired.
+- `Delta+W` and `Delta+S` remain plain geometry actions, not tile-tree actions.
 
 ### Tool Notes
 
@@ -57,7 +72,7 @@ Physical Caps Lock
   → keyd: f20 = layer(delta); layer keys → C-A-M-<key>
   → KWin global shortcut: Ctrl+Alt+Meta+Key
   → registerShortcut() handler in KWin script
-  → window tiled via w.frameGeometry
+  → window tiled via w.frameGeometry or a KWin root tile
 ```
 
 ### File Layout
@@ -92,10 +107,13 @@ keyboard_id = 3434:0151   # vendor:product (sudo keyd list-devices to find yours
 [bindings]
 # ID = KEY  x_start  width        (fractions of screen width)
 # ID = KEY  fixed    width height  (fixed pixel size, centered)
-DeltaTileLeft    = A  0      0.6667
-DeltaTileRight   = D  0.3333 0.6667
-DeltaTileLeft3   = Q  0      0.3333
-DeltaTileRight3  = E  0.6667 0.3333
+# ID = KEY  tile     layout side   (associate window with a KWin tile)
+DeltaTileLeft    = A      tile  thirds_right  left
+DeltaTileRight   = D      tile  thirds_left   right
+DeltaTileLeft3   = Q      tile  thirds_left   left
+DeltaTileRight3  = E      tile  thirds_right  right
+DeltaHalfLeft    = Left   tile  halves  left
+DeltaHalfRight   = Right  tile  halves  right
 DeltaFullscreen  = W  0      1
 DeltaCenterFixed = S  fixed  1024 768
 
@@ -104,6 +122,18 @@ DeltaCenterFixed = S  fixed  1024 768
 # Find window class: qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo
 # org.kde.konsole.A = 0 1
 ```
+
+### Tile Script Behavior
+
+- Layouts currently supported by the generated KWin script:
+  - `halves`: `1/2 | 1/2`
+  - `thirds_left`: `1/3 | 2/3`
+  - `thirds_right`: `2/3 | 1/3`
+- The script first associates the window with a KWin tile, then explicitly writes `frameGeometry`
+  using the tile's relative geometry projected onto `KWin.MaximizeArea`.
+- This explicit geometry write is currently what makes the visual placement reliable.
+- The KWin API accepts tile association before it visibly reflows the window, so the fallback
+  geometry write is part of the working design, not just debug scaffolding.
 
 ### Critical: KDE Shortcut ID Stability
 
@@ -183,6 +213,7 @@ sudo keyd monitor          # raw evdev events as keyd sees/transforms them
 journalctl -u keyd -f      # live keyd service log
 delta status               # check keyd + KWin script state
 qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo   # get active window's WM_CLASS
+journalctl --user -b --no-pager | rg "DELTA:"            # KWin script debug output
 ```
 
 Hold Delta+A and check `keyd monitor` — should show `Ctrl+Alt+Meta+a` emission.
