@@ -35,8 +35,9 @@ Right hand stays on mouse — all bindings are left-hand operable.
 | Delta+Left | Tile to left 1/2 in a 50/50 KWin layout                      |
 | Delta+Right| Tile to right 1/2 in a 50/50 KWin layout                     |
 | Delta+R    | Focus or launch Discord, then tile it to the left 1/3        |
-| Delta+Z    | Focus or launch Obsidian                                     |
+| Delta+V    | Focus or launch Obsidian                                     |
 | Delta+C    | Focus or launch VS Code                                      |
+| Delta+X    | Focus or launch Konsole                                      |
 | Delta+S    | Float at fixed 1024×768, centered on screen                   |
 
 These mirror the Windows/macOS Delta-2 workflow (github.com/Seglectic/Delta-2).
@@ -58,16 +59,14 @@ KDE's built-in QuickTile can't do 2/3 or 1/3 widths — custom KWin tiling scrip
   the opposite tile. Current behavior leaves the existing window in place so windows can stack in
   the same zone if desired.
 - `Delta+W` and `Delta+S` remain plain geometry actions, not tile-tree actions.
-- `Delta+R/Z/C` are app actions. Existing windows are focused in KWin; launch fallback is handled
+- `Delta+R/V/C/X` are app actions. Existing windows are focused in KWin; launch fallback is handled
   through a user systemd unit (`delta-launch@.service`) that runs the local
   `~/.local/bin/delta/delta-app-launch` helper.
 - Discord is special-cased: after focus or launch, it is also tiled into the left `1/3`.
 - If an app hotkey targets a window that is already active, the window is minimized. Pressing the
   hotkey again restores the minimized window and focuses it.
-- Current unresolved edge case: `Delta+Z` does not fire from the physical keyboard even though
-  `DeltaObsidian` is registered in KWin, works via D-Bus invocation, and no longer conflicts in
-  `kglobalshortcutsrc`. That points to the remaining bug being in the physical input path rather
-  than the KWin app-action logic.
+- Obsidian is bound under a fresh KDE shortcut ID (`DeltaObsidianV`) on `Delta+V` because the old
+  `Delta+Z` path got stuck in stale KDE shortcut state.
 
 ### Tool Notes
 
@@ -133,7 +132,7 @@ DeltaTileRight3  = E      tile  thirds_right  right
 DeltaHalfLeft    = Left   tile  halves  left
 DeltaHalfRight   = Right  tile  halves  right
 DeltaDiscord     = R      app   discord
-DeltaObsidian    = Z      app   obsidian
+DeltaObsidianV   = V      app   obsidian
 DeltaCode        = C      app   code
 DeltaFullscreen  = W  0      1
 DeltaCenterFixed = S  fixed  1024 768

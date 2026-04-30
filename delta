@@ -76,7 +76,7 @@ HEADER
     ignored_desktop_files=$(get_value "guards" "ignored_desktop_files")
     ignored_classes=$(get_value "guards" "ignored_classes")
     [[ -z "$ignore_fullscreen" ]] && ignore_fullscreen="true"
-    echo "var deltaDebug = true;"
+    echo "var deltaDebug = false;"
     echo "var ignoreFullscreen = ${ignore_fullscreen,,};"
     if [[ -n "$ignored_desktop_files" ]]; then
         echo "var ignoredDesktopFiles = [$(printf '"%s"' "${ignored_desktop_files//,/\",\"}")];"
@@ -414,6 +414,11 @@ function windowMatchesProfile(w, profile) {
                resourceClass === "code" ||
                resourceClass === "vscode" ||
                caption.indexOf("visual studio code") >= 0;
+    }
+    if (profile === "konsole") {
+        return desktopFile.indexOf("org.kde.konsole") >= 0 ||
+               resourceClass.indexOf("konsole") >= 0 ||
+               caption.indexOf("konsole") >= 0;
     }
     return false;
 }
