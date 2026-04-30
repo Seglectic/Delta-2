@@ -68,11 +68,30 @@ HEADER
         echo "windowOverrides[\"$app\"][\"${action,,}\"] = [$xf, $wf];"
     done < <(get_section "overrides")
 
+    local ignore_fullscreen ignored_desktop_files ignored_classes
+    ignore_fullscreen=$(get_value "guards" "ignore_fullscreen")
+    ignored_desktop_files=$(get_value "guards" "ignored_desktop_files")
+    ignored_classes=$(get_value "guards" "ignored_classes")
+    [[ -z "$ignore_fullscreen" ]] && ignore_fullscreen="true"
+    echo "var deltaDebug = false;"
+    echo "var ignoreFullscreen = ${ignore_fullscreen,,};"
+    if [[ -n "$ignored_desktop_files" ]]; then
+        echo "var ignoredDesktopFiles = [$(printf '"%s"' "${ignored_desktop_files//,/\",\"}")];"
+    else
+        echo "var ignoredDesktopFiles = [];"
+    fi
+    if [[ -n "$ignored_classes" ]]; then
+        echo "var ignoredClasses = [$(printf '"%s"' "${ignored_classes//,/\",\"}")];"
+    else
+        echo "var ignoredClasses = [];"
+    fi
+
     cat << 'FUNCS'
 
 function tile(action, defaultX, defaultW) {
     var w = workspace.activeWindow;
     if (!w) return;
+    if (shouldIgnoreWindow(w)) return;
     var xf = defaultX, wf = defaultW;
     var ov = windowOverrides[w.resourceClass];
     if (ov && ov[action]) { xf = ov[action][0]; wf = ov[action][1]; }
@@ -87,6 +106,7 @@ function tile(action, defaultX, defaultW) {
 function tileFixed(fw, fh) {
     var w = workspace.activeWindow;
     if (!w) return;
+    if (shouldIgnoreWindow(w)) return;
     w.setMaximize(false, false);
     var area = workspace.clientArea(KWin.MaximizeArea, w);
     w.frameGeometry = {
@@ -97,7 +117,9 @@ function tileFixed(fw, fh) {
 }
 
 function logDelta(message) {
-    print("DELTA: " + message);
+    if (deltaDebug) {
+        print("DELTA: " + message);
+    }
 }
 
 var tileInsets = {
@@ -106,6 +128,37 @@ var tileInsets = {
     right: 4,
     bottom: 4
 };
+
+function normalizedString(value) {
+    if (!value) return "";
+    return ("" + value).toLowerCase();
+}
+
+function arrayContainsNormalized(list, value) {
+    var i;
+    var needle = normalizedString(value);
+    if (!needle) return false;
+    for (i = 0; i < list.length; ++i) {
+        if (normalizedString(list[i]) === needle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function shouldIgnoreWindow(w) {
+    if (!w) return true;
+    if (ignoreFullscreen && w.fullScreen) {
+        return true;
+    }
+    if (arrayContainsNormalized(ignoredDesktopFiles, w.desktopFileName || w.desktopFile)) {
+        return true;
+    }
+    if (arrayContainsNormalized(ignoredClasses, w.resourceClass)) {
+        return true;
+    }
+    return false;
+}
 
 function approx(a, b) {
     return Math.abs(a - b) < 0.01;
@@ -263,32 +316,16 @@ function ensureTwoColumnLayout(rootTile, layoutName) {
 function manageIntoTile(tile, window) {
     var geom = null;
     var area = null;
-    if (!tile || !window) {
-        logDelta("manageIntoTile: missing tile or window");
-        return;
-    }
+    if (!tile || !window) return;
     if (typeof tile.manage === "function") {
-        logDelta("manageIntoTile: using tile.manage()");
         tile.manage(window);
     } else {
-        logDelta("manageIntoTile: using window.tile compatibility");
         window.tile = tile;
     }
     if (typeof workspace.scheduleRearrange === "function") {
         workspace.scheduleRearrange();
-        logDelta("manageIntoTile: called workspace.scheduleRearrange()");
     } else if (typeof workspace.rearrange === "function") {
         workspace.rearrange();
-        logDelta("manageIntoTile: called workspace.rearrange()");
-    }
-    if (window.tile) {
-        logDelta(
-            "manageIntoTile: window.tile now=(" +
-            window.tile.relativeGeometry.x + "," +
-            window.tile.relativeGeometry.width + ")"
-        );
-    } else {
-        logDelta("manageIntoTile: window.tile still null");
     }
     area = workspace.clientArea(KWin.MaximizeArea, window);
     if (area && tile.relativeGeometry) {
@@ -298,34 +335,20 @@ function manageIntoTile(tile, window) {
             width: Math.round(area.width * tile.relativeGeometry.width) - tileInsets.left - tileInsets.right,
             height: Math.round(area.height * tile.relativeGeometry.height) - tileInsets.top - tileInsets.bottom
         };
-        logDelta(
-            "manageIntoTile: computed clientArea geometry=(" +
-            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
-        );
         window.frameGeometry = {
             x: geom.x,
             y: geom.y,
             width: geom.width,
             height: geom.height
         };
-        logDelta(
-            "manageIntoTile: requested frameGeometry=(" +
-            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
-        );
     } else if (tile.absoluteGeometryInScreen) {
         geom = tile.absoluteGeometryInScreen;
-        logDelta(
-            "manageIntoTile: fallback absoluteGeometryInScreen=(" +
-            geom.x + "," + geom.y + "," + geom.width + "," + geom.height + ")"
-        );
         window.frameGeometry = {
             x: geom.x,
             y: geom.y,
             width: geom.width,
             height: geom.height
         };
-    } else {
-        logDelta("manageIntoTile: no usable tile geometry");
     }
 }
 
@@ -339,27 +362,18 @@ function tileIntoLayout(layoutName, side) {
     var i;
     var otherWindow = null;
 
-    if (!w || !w.output) {
-        logDelta("tileIntoLayout(" + layoutName + "," + side + "): no active window or output");
-        return;
-    }
+    if (!w || !w.output) return;
+    if (shouldIgnoreWindow(w)) return;
 
     manager = workspace.tilingForScreen(w.output.name);
-    if (!manager || !manager.rootTile) {
-        logDelta("tileIntoLayout(" + layoutName + "," + side + "): no tile manager for " + w.output.name);
-        return;
-    }
+    if (!manager || !manager.rootTile) return;
     rootTile = manager.rootTile;
 
     collectLeafWindows(rootTile, existing);
-    if (!ensureTwoColumnLayout(rootTile, layoutName)) {
-        logDelta("tileIntoLayout(" + layoutName + "," + side + "): failed to build layout");
-        return;
-    }
+    if (!ensureTwoColumnLayout(rootTile, layoutName)) return;
 
     slotIndex = side === "right" ? 1 : 0;
     otherIndex = slotIndex === 0 ? 1 : 0;
-    logDelta("tileIntoLayout(" + layoutName + "," + side + "): slotIndex=" + slotIndex + " otherIndex=" + otherIndex);
 
     for (i = 0; i < existing.length; ++i) {
         if (existing[i] !== w) {
@@ -368,13 +382,10 @@ function tileIntoLayout(layoutName, side) {
         }
     }
 
-    if (otherWindow) {
-        logDelta("tileIntoLayout(" + layoutName + "," + side + "): leaving existing other window in place");
-    }
+    if (otherWindow) {}
 
     w.setMaximize(false, false);
     manageIntoTile(rootTile.tiles[slotIndex], w);
-    logDelta("tileIntoLayout(" + layoutName + "," + side + "): assigned active window");
 }
 
 FUNCS

@@ -47,6 +47,10 @@ KDE's built-in QuickTile can't do 2/3 or 1/3 widths — custom KWin tiling scrip
   full output geometry so panels/taskbars are respected.
 - A small inset is applied to better match KDE's drag-to-tile feel:
   `left=2`, `top=4`, `right=4`, `bottom=4`
+- Delta actions are ignored for fullscreen windows by default. This is the main safeguard against
+  fat-fingering a game window.
+- Optional deny lists exist for non-fullscreen edge cases:
+  `[guards].ignored_desktop_files` and `[guards].ignored_classes`
 - Repeated placement into the same tile does **not** automatically push the existing window into
   the opposite tile. Current behavior leaves the existing window in place so windows can stack in
   the same zone if desired.
@@ -116,6 +120,11 @@ DeltaHalfLeft    = Left   tile  halves  left
 DeltaHalfRight   = Right  tile  halves  right
 DeltaFullscreen  = W  0      1
 DeltaCenterFixed = S  fixed  1024 768
+
+[guards]
+ignore_fullscreen = true
+# ignored_desktop_files = steam_app_2357570, lutris
+# ignored_classes = wine, steam_app_2357570
 
 [overrides]
 # Per-app tile overrides. Format: app_class.KEY = x_start width
