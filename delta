@@ -14,6 +14,8 @@ KEYD_CONF="/etc/keyd/default.conf"
 LAUNCHER_SCRIPT="$DELTA_DIR/delta-app-launch"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 LAUNCHER_UNIT="$SYSTEMD_USER_DIR/delta-launch@.service"
+XREMAP_CONF="$HOME/.config/xremap/config.yml"
+XREMAP_SERVICE="$SYSTEMD_USER_DIR/xremap.service"
 
 # ─── Config parser ─────────────────────────────────────────────────────────────
 # Prints lines from a named [section], stripping comments and blank lines
@@ -30,18 +32,20 @@ get_section() {
 }
 
 get_value() {
-    get_section "$1" | grep "^$2" | cut -d= -f2- | tr -d ' '
+    get_section "$1" | grep "^${2}[[:space:]]*=" | cut -d= -f2- | tr -d ' '
 }
 
 # ─── Generators ────────────────────────────────────────────────────────────────
 generate_keyd() {
-    local kbd_id
+    local kbd_id mod_key
     kbd_id=$(get_value "device" "keyboard_id")
+    mod_key=$(get_value "device" "modifier_key")
+    [[ -z "$mod_key" ]] && mod_key="f20"
     echo "[ids]"
     echo "${kbd_id:-*}"
     echo ""
     echo "[main]"
-    echo "f20 = layer(delta)"
+    echo "${mod_key,,} = layer(delta)"
     echo ""
     echo "[delta]"
     while IFS='=' read -r id rest; do
@@ -151,6 +155,7 @@ function arrayContainsNormalized(list, value) {
 
 function shouldIgnoreWindow(w) {
     if (!w) return true;
+    if (w.desktopWindow || w.windowType === 1) return true;
     if (ignoreFullscreen && w.fullScreen) {
         return true;
     }
@@ -202,60 +207,6 @@ function splitHorizontal(rootTile) {
 
     logDelta("splitHorizontal: no candidate produced 2 tiles");
     return false;
-}
-
-function collectLeafWindows(tile, out) {
-    var i;
-    for (i = 0; i < tile.windows.length; ++i) {
-        if (out.indexOf(tile.windows[i]) === -1) {
-            out.push(tile.windows[i]);
-        }
-    }
-    for (i = 0; i < tile.tiles.length; ++i) {
-        collectLeafWindows(tile.tiles[i], out);
-    }
-}
-
-function ensureHalvesLayout(rootTile) {
-    if (rootTile.tiles.length === 2 &&
-        approx(rootTile.tiles[0].relativeGeometry.x, 0) &&
-        approx(rootTile.tiles[0].relativeGeometry.width, 0.5) &&
-        approx(rootTile.tiles[1].relativeGeometry.x, 0.5) &&
-        approx(rootTile.tiles[1].relativeGeometry.width, 0.5)) {
-        return true;
-    }
-
-    clearTiles(rootTile);
-    if (!splitHorizontal(rootTile)) {
-        return false;
-    }
-    logDelta("ensureHalvesLayout: after split tiles=" + rootTile.tiles.length);
-    if (!rootTile.tiles[0]) {
-        logDelta("ensureHalvesLayout: tiles[0] missing");
-        return false;
-    }
-    if (!rootTile.tiles[1]) {
-        logDelta("ensureHalvesLayout: tiles[1] missing");
-        return false;
-    }
-    rootTile.tiles[0].relativeGeometry = {
-        x: 0,
-        y: 0,
-        width: 0.5,
-        height: 1
-    };
-    rootTile.tiles[1].relativeGeometry = {
-        x: 0.5,
-        y: 0,
-        width: 0.5,
-        height: 1
-    };
-    logDelta(
-        "ensureHalvesLayout: tiles=" + rootTile.tiles.length +
-        " left=(" + rootTile.tiles[0].relativeGeometry.x + "," + rootTile.tiles[0].relativeGeometry.width + ")" +
-        " right=(" + rootTile.tiles[1].relativeGeometry.x + "," + rootTile.tiles[1].relativeGeometry.width + ")"
-    );
-    return rootTile.tiles.length === 2;
 }
 
 function layoutLeftWidth(layoutName) {
@@ -359,11 +310,7 @@ function tileIntoLayout(layoutName, side, targetWindow) {
     var w = targetWindow || workspace.activeWindow;
     var manager;
     var rootTile;
-    var existing = [];
     var slotIndex;
-    var otherIndex;
-    var i;
-    var otherWindow = null;
 
     if (!w || !w.output) return;
     if (shouldIgnoreWindow(w)) return;
@@ -372,20 +319,9 @@ function tileIntoLayout(layoutName, side, targetWindow) {
     if (!manager || !manager.rootTile) return;
     rootTile = manager.rootTile;
 
-    collectLeafWindows(rootTile, existing);
     if (!ensureTwoColumnLayout(rootTile, layoutName)) return;
 
     slotIndex = side === "right" ? 1 : 0;
-    otherIndex = slotIndex === 0 ? 1 : 0;
-
-    for (i = 0; i < existing.length; ++i) {
-        if (existing[i] !== w) {
-            otherWindow = existing[i];
-            break;
-        }
-    }
-
-    if (otherWindow) {}
 
     w.setMaximize(false, false);
     manageIntoTile(rootTile.tiles[slotIndex], w);
@@ -552,14 +488,53 @@ FUNCS
 }
 
 generate_launcher_unit() {
-    cat <<'UNIT'
+    cat <<UNIT
 [Unit]
 Description=Delta app launcher for %i
 
 [Service]
 Type=oneshot
-ExecStart=/home/segger/.local/bin/delta/delta-app-launch %i
+ExecStart=$LAUNCHER_SCRIPT %i
 UNIT
+}
+
+generate_xremap() {
+    local mod_key xmod
+    mod_key=$(get_value "device" "modifier_key")
+    [[ -z "$mod_key" ]] && mod_key="capslock"
+    case "${mod_key,,}" in
+        capslock) xmod="CapsLock" ;;
+        f20)      xmod="KEY_F20"  ;;
+        *)        xmod="$mod_key" ;;
+    esac
+
+    # NOTE: The modmap held+keymap chaining relies on xremap treating KEY_F20 as a
+    # virtual modifier. Verified on xremap >=0.10 with --features kde. If combos don't
+    # fire, check: systemctl --user status xremap and journalctl --user -u xremap -f
+    printf 'modmap:\n'
+    printf '  - name: delta-modifier\n'
+    printf '    remap:\n'
+    printf '      %s:\n' "$xmod"
+    printf '        held: KEY_F20\n'
+    printf '        alone: %s\n' "$xmod"
+    printf '\n'
+    printf 'keymap:\n'
+    printf '  - name: delta-layer\n'
+    printf '    remap:\n'
+
+    while IFS='=' read -r id rest; do
+        id="${id// /}"
+        read -r key _ <<< "$rest"
+        local xkey
+        case "${key,,}" in
+            left)  xkey="Left"  ;;
+            right) xkey="Right" ;;
+            up)    xkey="Up"    ;;
+            down)  xkey="Down"  ;;
+            *)     xkey="${key,,}" ;;
+        esac
+        printf '      KEY_F20-%s: Ctrl-Alt-Super-%s\n' "$xkey" "$xkey"
+    done < <(get_section "bindings")
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────────────
@@ -575,10 +550,61 @@ _restart_keyd() {
     [[ -w "$KEYD_CONF" ]] && keyd reload || sudo keyd reload
 }
 
+_is_immutable() {
+    grep -q 'ID=steamos' /etc/os-release 2>/dev/null && return 0
+    findmnt -n -o OPTIONS / 2>/dev/null | grep -qw 'ro' && return 0
+    return 1
+}
+
+_install_xremap_service() {
+    local xremap_bin
+    xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
+    mkdir -p "$(dirname "$XREMAP_SERVICE")"
+    cat > "$XREMAP_SERVICE" <<UNIT
+[Unit]
+Description=xremap key remapper (delta modifier)
+
+[Service]
+ExecStart=${xremap_bin} ${XREMAP_CONF}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+UNIT
+}
+
 cmd_apply() {
-    echo "==> Generating keyd config..."
-    _apply_keyd
-    echo "    wrote $KEYD_CONF"
+    local backend
+    backend=$(get_value "device" "backend")
+    [[ -z "$backend" ]] && backend="keyd"
+    case "$backend" in
+        xremap) cmd_apply_user ;;
+        *)
+            echo "==> Generating keyd config..."
+            _apply_keyd
+            echo "    wrote $KEYD_CONF"
+            echo "==> Generating KWin script..."
+            mkdir -p "$(dirname "$KWIN_SCRIPT")"
+            generate_kwin > "$KWIN_SCRIPT"
+            _reload_kwin
+            echo "    wrote $KWIN_SCRIPT"
+            echo "Done."
+            ;;
+    esac
+}
+
+cmd_apply_user() {
+    echo "==> Generating xremap config..."
+    mkdir -p "$(dirname "$XREMAP_CONF")"
+    generate_xremap > "$XREMAP_CONF"
+    echo "    wrote $XREMAP_CONF"
+
+    echo "==> Installing xremap user service..."
+    _install_xremap_service
+    systemctl --user daemon-reload
+    systemctl --user enable xremap 2>/dev/null || true
+    systemctl --user restart xremap
+    echo "    xremap service restarted"
 
     echo "==> Generating KWin script..."
     mkdir -p "$(dirname "$KWIN_SCRIPT")"
@@ -589,10 +615,27 @@ cmd_apply() {
 }
 
 cmd_reload() {
-    echo "==> Reloading keyd..."
-    _restart_keyd
+    local backend
+    backend=$(get_value "device" "backend")
+    [[ -z "$backend" ]] && backend="keyd"
+    case "$backend" in
+        xremap)
+            echo "==> Reloading xremap..."
+            systemctl --user restart xremap
+            ;;
+        *)
+            echo "==> Reloading keyd..."
+            _restart_keyd
+            ;;
+    esac
     echo "==> Reloading KWin script..."
     _reload_kwin
+    echo "Done."
+}
+
+cmd_reload_user() {
+    echo "==> Restarting xremap service..."
+    systemctl --user restart xremap
     echo "Done."
 }
 
@@ -624,14 +667,40 @@ _reload_kwin() {
 }
 
 cmd_status() {
-    local keyd_state kwin_loaded
-    keyd_state=$(systemctl is-active keyd 2>/dev/null)
+    local backend kwin_loaded
+    backend=$(get_value "device" "backend")
+    [[ -z "$backend" ]] && backend="keyd"
     kwin_loaded=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.isScriptLoaded "delta-tile" 2>/dev/null)
-    echo "keyd service:     $keyd_state"
+    echo "backend:          $backend"
     echo "kwin script:      ${kwin_loaded:-unknown}"
     echo "config:           $CONF"
     echo "kwin script path: $KWIN_SCRIPT"
-    echo "keyd config:      $KEYD_CONF"
+    if [[ "$backend" == "xremap" ]]; then
+        local xremap_state
+        xremap_state=$(systemctl --user is-active xremap 2>/dev/null)
+        echo "xremap service:   ${xremap_state:-unknown}"
+        echo "xremap config:    $XREMAP_CONF"
+    else
+        local keyd_state
+        keyd_state=$(systemctl is-active keyd 2>/dev/null)
+        echo "keyd service:     ${keyd_state:-unknown}"
+        echo "keyd config:      $KEYD_CONF"
+    fi
+}
+
+AUTOSTART_FILE="$HOME/.config/autostart/delta-kwin.desktop"
+
+cmd_render_autostart() {
+    mkdir -p "$(dirname "$AUTOSTART_FILE")"
+    cat > "$AUTOSTART_FILE" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Delta 2 KWin Script
+Exec=bash -c 'sleep 2 && $DELTA_DIR/delta reload-kwin'
+X-KDE-autostart-phase=2
+NoDisplay=true
+DESKTOP
+    echo "    wrote $AUTOSTART_FILE"
 }
 
 cmd_setup() {
@@ -649,22 +718,65 @@ cmd_setup() {
     echo "Log out and back in for the keyd group to take effect, then run: delta apply"
 }
 
+cmd_install_xremap() {
+    echo "xremap install instructions:"
+    echo ""
+    if _is_immutable; then
+        echo "  Immutable filesystem detected (SteamOS or similar)."
+        echo "  Install pre-built binary to ~/.local/bin/:"
+        echo ""
+        echo "    mkdir -p ~/.local/bin"
+        echo "    curl -L https://github.com/xremap/xremap/releases/latest/download/xremap-linux-x86_64-kde.zip \\"
+        echo "         -o /tmp/xremap.zip"
+        echo "    unzip /tmp/xremap.zip -d /tmp/xremap-bin"
+        echo "    cp /tmp/xremap-bin/xremap ~/.local/bin/xremap"
+        echo "    chmod +x ~/.local/bin/xremap"
+    else
+        echo "  Option 1 — cargo (recommended if Rust is installed):"
+        echo "    cargo install xremap --features kde"
+        echo ""
+        echo "  Option 2 — pre-built binary:"
+        echo "    mkdir -p ~/.local/bin"
+        echo "    curl -L https://github.com/xremap/xremap/releases/latest/download/xremap-linux-x86_64-kde.zip \\"
+        echo "         -o /tmp/xremap.zip"
+        echo "    unzip /tmp/xremap.zip -d /tmp/xremap-bin"
+        echo "    cp /tmp/xremap-bin/xremap ~/.local/bin/xremap"
+        echo "    chmod +x ~/.local/bin/xremap"
+    fi
+    echo ""
+    echo "  After installing, set backend = xremap in delta.conf, then run: delta apply-user"
+}
+
 case "${1:-help}" in
-    setup)  cmd_setup  ;;
-    apply)  cmd_apply  ;;
-    reload) cmd_reload ;;
-    render-kwin) cmd_render_kwin ;;
+    setup)           cmd_setup  ;;
+    apply)           cmd_apply  ;;
+    apply-user)      cmd_apply_user ;;
+    reload)          cmd_reload ;;
+    reload-user)     cmd_reload_user ;;
+    install-xremap)  cmd_install_xremap ;;
+    render-kwin)     cmd_render_kwin ;;
     render-launcher) cmd_render_launcher ;;
-    reload-kwin) cmd_reload_kwin ;;
-    status) cmd_status ;;
+    render-autostart) cmd_render_autostart ;;
+    reload-kwin)     cmd_reload_kwin ;;
+    status)          cmd_status ;;
     *)
         echo "Usage: delta <command>"
-        echo "  setup   — (once, with sudo) grants passwordless access to keyd config"
-        echo "  apply   — regenerate configs from delta.conf and reload everything"
-        echo "  reload  — reload keyd + KWin script without regenerating"
-        echo "  render-kwin — regenerate only the KWin script"
-        echo "  render-launcher — regenerate the user systemd launcher unit"
-        echo "  reload-kwin — reload only the KWin script"
-        echo "  status  — show current state of all components"
+        echo ""
+        echo "  keyd backend (QMK keyboard, default):"
+        echo "  setup             — (once, with sudo) grants passwordless access to keyd config"
+        echo "  apply             — regenerate configs from delta.conf and reload everything"
+        echo "  reload            — reload modifier backend + KWin script without regenerating"
+        echo ""
+        echo "  xremap backend (standard keyboard, work/immutable machines):"
+        echo "  install-xremap    — print platform-appropriate xremap install instructions"
+        echo "  apply-user        — regenerate xremap config + KWin script, restart xremap service"
+        echo "  reload-user       — restart xremap service only"
+        echo ""
+        echo "  shared:"
+        echo "  status            — show current state of all components"
+        echo "  render-kwin       — regenerate only the KWin script"
+        echo "  render-launcher   — regenerate the user systemd launcher unit"
+        echo "  render-autostart  — regenerate the KDE autostart entry"
+        echo "  reload-kwin       — reload only the KWin script"
         ;;
 esac
