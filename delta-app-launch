@@ -1,0 +1,14 @@
+#!/bin/bash
+set -euo pipefail
+
+case "${1:-}" in
+    discord)
+        exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/flatpak run com.discordapp.Discord ;;
+    obsidian)
+        exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/flatpak run md.obsidian.Obsidian ;;
+    code)
+        exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/code ;;
+    *)
+        echo "Unknown delta app profile: ${1:-}" >&2
+        exit 1 ;;
+esac

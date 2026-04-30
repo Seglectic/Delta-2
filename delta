@@ -11,6 +11,9 @@ DELTA_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$DELTA_DIR/delta.conf"
 KWIN_SCRIPT="$HOME/.local/share/kwin/scripts/delta-tile/contents/code/main.js"
 KEYD_CONF="/etc/keyd/default.conf"
+LAUNCHER_SCRIPT="$DELTA_DIR/delta-app-launch"
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+LAUNCHER_UNIT="$SYSTEMD_USER_DIR/delta-launch@.service"
 
 # ─── Config parser ─────────────────────────────────────────────────────────────
 # Prints lines from a named [section], stripping comments and blank lines
@@ -73,7 +76,7 @@ HEADER
     ignored_desktop_files=$(get_value "guards" "ignored_desktop_files")
     ignored_classes=$(get_value "guards" "ignored_classes")
     [[ -z "$ignore_fullscreen" ]] && ignore_fullscreen="true"
-    echo "var deltaDebug = false;"
+    echo "var deltaDebug = true;"
     echo "var ignoreFullscreen = ${ignore_fullscreen,,};"
     if [[ -n "$ignored_desktop_files" ]]; then
         echo "var ignoredDesktopFiles = [$(printf '"%s"' "${ignored_desktop_files//,/\",\"}")];"
@@ -352,8 +355,8 @@ function manageIntoTile(tile, window) {
     }
 }
 
-function tileIntoLayout(layoutName, side) {
-    var w = workspace.activeWindow;
+function tileIntoLayout(layoutName, side, targetWindow) {
+    var w = targetWindow || workspace.activeWindow;
     var manager;
     var rootTile;
     var existing = [];
@@ -388,6 +391,142 @@ function tileIntoLayout(layoutName, side) {
     manageIntoTile(rootTile.tiles[slotIndex], w);
 }
 
+var pendingAppActions = {};
+
+function windowMatchesProfile(w, profile) {
+    var desktopFile = normalizedString(w.desktopFileName || w.desktopFile);
+    var resourceClass = normalizedString(w.resourceClass);
+    var caption = normalizedString(w.caption);
+
+    if (profile === "discord") {
+        return desktopFile.indexOf("com.discordapp.discord") >= 0 ||
+               resourceClass.indexOf("discord") >= 0 ||
+               caption.indexOf("discord") >= 0;
+    }
+    if (profile === "obsidian") {
+        return desktopFile.indexOf("md.obsidian.obsidian") >= 0 ||
+               resourceClass.indexOf("obsidian") >= 0 ||
+               caption.indexOf("obsidian") >= 0;
+    }
+    if (profile === "code") {
+        return desktopFile === "code" ||
+               desktopFile.indexOf("code.desktop") >= 0 ||
+               resourceClass === "code" ||
+               resourceClass === "vscode" ||
+               caption.indexOf("visual studio code") >= 0;
+    }
+    return false;
+}
+
+function focusWindow(w) {
+    if (!w) return;
+    if (w.minimized) {
+        w.minimized = false;
+    }
+    workspace.raiseWindow(w);
+    workspace.activeWindow = w;
+    workspace.activateWindow(w, true);
+    if (typeof workspace.requestFocus === "function") {
+        workspace.requestFocus(w, true);
+    }
+    if (typeof w.takeFocus === "function") {
+        w.takeFocus();
+    }
+    setTimeout(function() {
+        workspace.raiseWindow(w);
+        workspace.activeWindow = w;
+        workspace.activateWindow(w, true);
+        if (typeof workspace.requestFocus === "function") {
+            workspace.requestFocus(w, true);
+        }
+        if (typeof w.takeFocus === "function") {
+            w.takeFocus();
+        }
+    }, 50);
+}
+
+function toggleMinimizeIfActive(w) {
+    if (!w) return false;
+    if (workspace.activeWindow === w || w.active) {
+        if (w.minimizable) {
+            w.minimized = true;
+        }
+        return true;
+    }
+    return false;
+}
+
+function applyAppAction(profile, w) {
+    logDelta("applyAppAction(" + profile + "): focusing window " + normalizedString(w.caption));
+    if (profile === "discord") {
+        logDelta("applyAppAction(discord): tiling to left third");
+        tileIntoLayout("thirds_left", "left", w);
+    }
+    focusWindow(w);
+}
+
+function findWindowForProfile(profile) {
+    var windows = workspace.stackingOrder;
+    var i;
+    var minimizedMatch = null;
+    for (i = windows.length - 1; i >= 0; --i) {
+        if (windows[i] && !windows[i].deleted && windowMatchesProfile(windows[i], profile)) {
+            if (!windows[i].minimized) {
+                logDelta("findWindowForProfile(" + profile + "): matched " + normalizedString(windows[i].caption));
+                return windows[i];
+            }
+            if (!minimizedMatch) {
+                minimizedMatch = windows[i];
+            }
+        }
+    }
+    if (minimizedMatch) {
+        logDelta("findWindowForProfile(" + profile + "): matched minimized " + normalizedString(minimizedMatch.caption));
+        return minimizedMatch;
+    }
+    logDelta("findWindowForProfile(" + profile + "): no match");
+    return null;
+}
+
+function launchProfile(profile) {
+    logDelta("launchProfile(" + profile + ")");
+    pendingAppActions[profile] = true;
+    callDBus(
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "StartUnit",
+        "delta-launch@" + profile + ".service",
+        "replace"
+    );
+}
+
+function focusOrLaunch(profile) {
+    logDelta("focusOrLaunch(" + profile + ")");
+    var existing = findWindowForProfile(profile);
+    if (existing) {
+        if (toggleMinimizeIfActive(existing)) {
+            logDelta("focusOrLaunch(" + profile + "): minimized active window");
+            return;
+        }
+        applyAppAction(profile, existing);
+        return;
+    }
+    launchProfile(profile);
+}
+
+workspace.windowAdded.connect(function(window) {
+    var profile;
+    for (profile in pendingAppActions) {
+        if (pendingAppActions[profile] && windowMatchesProfile(window, profile)) {
+            logDelta("windowAdded: matched pending profile " + profile);
+            pendingAppActions[profile] = false;
+            applyAppAction(profile, window);
+            return;
+        }
+    }
+});
+
 FUNCS
 
     while IFS='=' read -r id rest; do
@@ -399,10 +538,23 @@ FUNCS
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tileFixed(${wf}, ${extra}); });"
         elif [[ "$xf" == "tile" ]]; then
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tileIntoLayout(\"${wf}\", \"${extra}\"); });"
+        elif [[ "$xf" == "app" ]]; then
+            echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { focusOrLaunch(\"${wf}\"); });"
         else
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tile(\"${kl}\", ${xf}, ${wf}); });"
         fi
     done < <(get_section "bindings")
+}
+
+generate_launcher_unit() {
+    cat <<'UNIT'
+[Unit]
+Description=Delta app launcher for %i
+
+[Service]
+Type=oneshot
+ExecStart=/home/segger/.local/bin/delta/delta-app-launch %i
+UNIT
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────────────
@@ -444,6 +596,14 @@ cmd_render_kwin() {
     mkdir -p "$(dirname "$KWIN_SCRIPT")"
     generate_kwin > "$KWIN_SCRIPT"
     echo "    wrote $KWIN_SCRIPT"
+}
+
+cmd_render_launcher() {
+    echo "==> Generating launcher unit..."
+    mkdir -p "$SYSTEMD_USER_DIR"
+    generate_launcher_unit > "$LAUNCHER_UNIT"
+    chmod 644 "$LAUNCHER_UNIT"
+    echo "    wrote $LAUNCHER_UNIT"
 }
 
 cmd_reload_kwin() {
@@ -489,6 +649,7 @@ case "${1:-help}" in
     apply)  cmd_apply  ;;
     reload) cmd_reload ;;
     render-kwin) cmd_render_kwin ;;
+    render-launcher) cmd_render_launcher ;;
     reload-kwin) cmd_reload_kwin ;;
     status) cmd_status ;;
     *)
@@ -497,6 +658,7 @@ case "${1:-help}" in
         echo "  apply   — regenerate configs from delta.conf and reload everything"
         echo "  reload  — reload keyd + KWin script without regenerating"
         echo "  render-kwin — regenerate only the KWin script"
+        echo "  render-launcher — regenerate the user systemd launcher unit"
         echo "  reload-kwin — reload only the KWin script"
         echo "  status  — show current state of all components"
         ;;
