@@ -11,7 +11,7 @@ DELTA_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$DELTA_DIR/delta.conf"
 KWIN_SCRIPT="$HOME/.local/share/kwin/scripts/delta-tile/contents/code/main.js"
 KEYD_CONF="/etc/keyd/default.conf"
-LAUNCHER_SCRIPT="$DELTA_DIR/delta-app-launch"
+LAUNCHER_SCRIPT="$DELTA_DIR/delta-launcher"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 LAUNCHER_UNIT="$SYSTEMD_USER_DIR/delta-launch@.service"
 XREMAP_CONF="$HOME/.config/xremap/config.yml"
@@ -485,6 +485,26 @@ FUNCS
             echo "registerShortcut(\"${id}\", \"Delta: ${id}\", \"Ctrl+Alt+Meta+${ku}\", function() { tile(\"${kl}\", ${xf}, ${wf}); });"
         fi
     done < <(get_section "bindings")
+
+    # Aliases — bare keys that fire the same action as an existing binding
+    local _aid _akey _orig _okey _xf _wf _extra _ku
+    while IFS='=' read -r _aid _akey; do
+        _aid="${_aid// /}"; _akey="${_akey// /}"
+        [[ -z "$_aid" || -z "$_akey" ]] && continue
+        _orig=$(get_section "bindings" | grep -E "^${_aid}[[:space:]]*=")
+        [[ -z "$_orig" ]] && continue
+        read -r _okey _xf _wf _extra <<< "${_orig#*=}"
+        [[ ${#_akey} -eq 1 ]] && _ku="${_akey^^}" || _ku="$_akey"
+        if [[ "$_xf" == "app" ]]; then
+            echo "registerShortcut(\"${_aid}_${_akey}\", \"Delta: ${_aid} (${_akey})\", \"${_ku}\", function() { focusOrLaunch(\"${_wf}\"); });"
+        elif [[ "$_xf" == "fixed" ]]; then
+            echo "registerShortcut(\"${_aid}_${_akey}\", \"Delta: ${_aid} (${_akey})\", \"${_ku}\", function() { tileFixed(${_wf}, ${_extra}); });"
+        elif [[ "$_xf" == "tile" ]]; then
+            echo "registerShortcut(\"${_aid}_${_akey}\", \"Delta: ${_aid} (${_akey})\", \"${_ku}\", function() { tileIntoLayout(\"${_wf}\", \"${_extra}\"); });"
+        else
+            echo "registerShortcut(\"${_aid}_${_akey}\", \"Delta: ${_aid} (${_akey})\", \"${_ku}\", function() { tile(\"${_okey,,}\", ${_xf}, ${_wf}); });"
+        fi
+    done < <(get_section "aliases")
 }
 
 generate_launcher_unit() {
@@ -496,6 +516,24 @@ Description=Delta app launcher for %i
 Type=oneshot
 ExecStart=$LAUNCHER_SCRIPT %i
 UNIT
+}
+
+generate_launcher_script() {
+    echo "#!/bin/bash"
+    echo "set -euo pipefail"
+    echo ""
+    echo "case \"\${1:-}\" in"
+    while IFS='=' read -r profile cmd; do
+        profile="${profile// /}"
+        cmd="${cmd# }"
+        [[ -z "$profile" ]] && continue
+        echo "    ${profile})"
+        echo "        exec /usr/bin/systemd-run --user --scope --quiet ${cmd} ;;"
+    done < <(get_section "launchers")
+    echo "    *)"
+    echo "        echo \"Unknown delta app profile: \${1:-}\" >&2"
+    echo "        exit 1 ;;"
+    echo "esac"
 }
 
 generate_xremap() {
@@ -583,6 +621,10 @@ cmd_apply() {
             echo "==> Generating keyd config..."
             _apply_keyd
             echo "    wrote $KEYD_CONF"
+            echo "==> Generating launcher script..."
+            generate_launcher_script > "$LAUNCHER_SCRIPT"
+            chmod +x "$LAUNCHER_SCRIPT"
+            echo "    wrote $LAUNCHER_SCRIPT"
             echo "==> Generating KWin script..."
             mkdir -p "$(dirname "$KWIN_SCRIPT")"
             generate_kwin > "$KWIN_SCRIPT"
@@ -598,6 +640,11 @@ cmd_apply_user() {
     mkdir -p "$(dirname "$XREMAP_CONF")"
     generate_xremap > "$XREMAP_CONF"
     echo "    wrote $XREMAP_CONF"
+
+    echo "==> Generating launcher script..."
+    generate_launcher_script > "$LAUNCHER_SCRIPT"
+    chmod +x "$LAUNCHER_SCRIPT"
+    echo "    wrote $LAUNCHER_SCRIPT"
 
     echo "==> Installing xremap user service..."
     _install_xremap_service
@@ -647,6 +694,10 @@ cmd_render_kwin() {
 }
 
 cmd_render_launcher() {
+    echo "==> Generating launcher script..."
+    generate_launcher_script > "$LAUNCHER_SCRIPT"
+    chmod +x "$LAUNCHER_SCRIPT"
+    echo "    wrote $LAUNCHER_SCRIPT"
     echo "==> Generating launcher unit..."
     mkdir -p "$SYSTEMD_USER_DIR"
     generate_launcher_unit > "$LAUNCHER_UNIT"
