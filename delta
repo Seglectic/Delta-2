@@ -1,23 +1,19 @@
 #!/bin/bash
 # delta — configurator for the delta modifier key system
-# Usage: delta apply | reload | status
+# Usage: delta apply | reload | status | install-xremap | render-kwin | render-launcher | render-autostart | reload-kwin
 #
-# apply   reads delta.conf and regenerates /etc/keyd/default.conf
-#         and the KWin script, then reloads both
-# reload  reloads keyd + KWin script without regenerating
+# apply   reads delta.conf and regenerates the xremap config and KWin script, then reloads both
+# reload  restarts xremap service + reloads KWin script without regenerating
 # status  shows current state of all components
 
 DELTA_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$DELTA_DIR/delta.conf"
 KWIN_SCRIPT="$HOME/.local/share/kwin/scripts/delta-tile/contents/code/main.js"
-KEYD_CONF="/etc/keyd/default.conf"
 LAUNCHER_SCRIPT="$DELTA_DIR/delta-launcher"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 LAUNCHER_UNIT="$SYSTEMD_USER_DIR/delta-launch@.service"
 XREMAP_CONF="$HOME/.config/xremap/config.yml"
 XREMAP_SERVICE="$SYSTEMD_USER_DIR/xremap.service"
-XREMAP_APPBINDINGS_CONF="$HOME/.config/xremap/app-bindings.yml"
-XREMAP_APPBINDINGS_SERVICE="$SYSTEMD_USER_DIR/xremap-appbindings.service"
 
 # ─── Config parser ─────────────────────────────────────────────────────────────
 # Prints lines from a named [section], stripping comments and blank lines
@@ -38,25 +34,6 @@ get_value() {
 }
 
 # ─── Generators ────────────────────────────────────────────────────────────────
-generate_keyd() {
-    local kbd_id mod_key
-    kbd_id=$(get_value "device" "keyboard_id")
-    mod_key=$(get_value "device" "modifier_key")
-    [[ -z "$mod_key" ]] && mod_key="f20"
-    echo "[ids]"
-    echo "${kbd_id:-*}"
-    echo ""
-    echo "[main]"
-    echo "${mod_key,,} = layer(delta)"
-    echo ""
-    echo "[delta]"
-    while IFS='=' read -r id rest; do
-        id="${id// /}"
-        read -r key _ <<< "$rest"
-        echo "${key,,} = C-A-M-${key,,}"
-    done < <(get_section "bindings")
-}
-
 generate_kwin() {
     cat << 'HEADER'
 // Delta Tile — KWin script
@@ -599,10 +576,6 @@ _emit_xremap_appbindings() {
     done < <(get_section "app_bindings")
 }
 
-_has_app_bindings() {
-    [[ -n "$(get_section "app_bindings")" ]]
-}
-
 _check_input_group() {
     # id -nG reflects the current session's group credentials.
     if id -nG | grep -qw input; then
@@ -622,60 +595,7 @@ _check_input_group() {
     return 1
 }
 
-_install_xremap_appbindings_service() {
-    local xremap_bin
-    local device_args
-    xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
-    _xremap_appbindings_device_args device_args
-    mkdir -p "$(dirname "$XREMAP_APPBINDINGS_SERVICE")"
-    cat > "$XREMAP_APPBINDINGS_SERVICE" <<UNIT
-[Unit]
-Description=xremap app-specific key bindings (delta)
-
-[Service]
-ExecStart=${xremap_bin} ${device_args[*]} ${XREMAP_APPBINDINGS_CONF}
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-UNIT
-}
-
-_xremap_appbindings_device_args() {
-    local __outvar="$1"
-    local _args=""
-    local _device
-    local _escaped
-
-    while IFS= read -r _device; do
-        [[ -z "${_device// }" ]] && continue
-        _escaped="${_device//\\/\\\\}"
-        _escaped="${_escaped//\"/\\\"}"
-        _args+=" --device \"${_escaped}\""
-    done < <(get_section "app_binding_devices")
-
-    if [[ -z "$_args" ]]; then
-        # Safe default for the keyd backend: only watch keyd's virtual keyboard.
-        # Physical encoder-only devices should be listed in [app_binding_devices].
-        _args=' --device "keyd virtual keyboard"'
-    fi
-
-    printf -v "$__outvar" '%s' "$_args"
-}
-
 # ─── Commands ──────────────────────────────────────────────────────────────────
-_apply_keyd() {
-    if [[ -w "$KEYD_CONF" ]]; then
-        generate_keyd > "$KEYD_CONF" && keyd reload
-    else
-        generate_keyd | sudo tee "$KEYD_CONF" > /dev/null && sudo keyd reload
-    fi
-}
-
-_restart_keyd() {
-    [[ -w "$KEYD_CONF" ]] && keyd reload || sudo keyd reload
-}
-
 _is_immutable() {
     grep -q 'ID=steamos' /etc/os-release 2>/dev/null && return 0
     findmnt -n -o OPTIONS / 2>/dev/null | grep -qw 'ro' && return 0
@@ -718,39 +638,7 @@ _xremap_service_device_args() {
 }
 
 cmd_apply() {
-    local backend
-    backend=$(get_value "device" "backend")
-    [[ -z "$backend" ]] && backend="keyd"
-    case "$backend" in
-        xremap) cmd_apply_user ;;
-        *)
-            echo "==> Generating keyd config..."
-            _apply_keyd
-            echo "    wrote $KEYD_CONF"
-            echo "==> Generating launcher script..."
-            generate_launcher_script > "$LAUNCHER_SCRIPT"
-            chmod +x "$LAUNCHER_SCRIPT"
-            echo "    wrote $LAUNCHER_SCRIPT"
-            if _has_app_bindings; then
-                _check_input_group || { echo "    skipping xremap app-bindings."; return 0; }
-                echo "==> Generating xremap app-bindings config..."
-                mkdir -p "$(dirname "$XREMAP_APPBINDINGS_CONF")"
-                generate_xremap_appbindings > "$XREMAP_APPBINDINGS_CONF"
-                echo "    wrote $XREMAP_APPBINDINGS_CONF"
-                _install_xremap_appbindings_service
-                systemctl --user daemon-reload
-                systemctl --user enable xremap-appbindings 2>/dev/null || true
-                systemctl --user restart xremap-appbindings
-                echo "    xremap-appbindings service restarted"
-            fi
-            echo "==> Generating KWin script..."
-            mkdir -p "$(dirname "$KWIN_SCRIPT")"
-            generate_kwin > "$KWIN_SCRIPT"
-            _reload_kwin
-            echo "    wrote $KWIN_SCRIPT"
-            echo "Done."
-            ;;
-    esac
+    cmd_apply_user
 }
 
 cmd_apply_user() {
@@ -781,31 +669,10 @@ cmd_apply_user() {
 }
 
 cmd_reload() {
-    local backend
-    backend=$(get_value "device" "backend")
-    [[ -z "$backend" ]] && backend="keyd"
-    case "$backend" in
-        xremap)
-            echo "==> Reloading xremap..."
-            systemctl --user restart xremap
-            ;;
-        *)
-            echo "==> Reloading keyd..."
-            _restart_keyd
-            if systemctl --user is-active --quiet xremap-appbindings 2>/dev/null; then
-                echo "==> Reloading xremap app-bindings..."
-                systemctl --user restart xremap-appbindings
-            fi
-            ;;
-    esac
+    echo "==> Reloading xremap..."
+    systemctl --user restart xremap
     echo "==> Reloading KWin script..."
     _reload_kwin
-    echo "Done."
-}
-
-cmd_reload_user() {
-    echo "==> Restarting xremap service..."
-    systemctl --user restart xremap
     echo "Done."
 }
 
@@ -841,25 +708,14 @@ _reload_kwin() {
 }
 
 cmd_status() {
-    local backend kwin_loaded
-    backend=$(get_value "device" "backend")
-    [[ -z "$backend" ]] && backend="keyd"
+    local kwin_loaded xremap_state
     kwin_loaded=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.isScriptLoaded "delta-tile" 2>/dev/null)
-    echo "backend:          $backend"
+    xremap_state=$(systemctl --user is-active xremap 2>/dev/null)
     echo "kwin script:      ${kwin_loaded:-unknown}"
     echo "config:           $CONF"
     echo "kwin script path: $KWIN_SCRIPT"
-    if [[ "$backend" == "xremap" ]]; then
-        local xremap_state
-        xremap_state=$(systemctl --user is-active xremap 2>/dev/null)
-        echo "xremap service:   ${xremap_state:-unknown}"
-        echo "xremap config:    $XREMAP_CONF"
-    else
-        local keyd_state
-        keyd_state=$(systemctl is-active keyd 2>/dev/null)
-        echo "keyd service:     ${keyd_state:-unknown}"
-        echo "keyd config:      $KEYD_CONF"
-    fi
+    echo "xremap service:   ${xremap_state:-unknown}"
+    echo "xremap config:    $XREMAP_CONF"
 }
 
 AUTOSTART_FILE="$HOME/.config/autostart/delta-kwin.desktop"
@@ -875,21 +731,6 @@ X-KDE-autostart-phase=2
 NoDisplay=true
 DESKTOP
     echo "    wrote $AUTOSTART_FILE"
-}
-
-cmd_setup() {
-    if [[ "$EUID" -ne 0 ]]; then
-        echo "Run setup with sudo: sudo delta setup"; exit 1
-    fi
-    local user="${SUDO_USER:-$USER}"
-    usermod -aG keyd "$user"
-    chgrp keyd /etc/keyd
-    chmod g+w /etc/keyd
-    touch "$KEYD_CONF"
-    chgrp keyd "$KEYD_CONF"
-    chmod g+rw "$KEYD_CONF"
-    echo "Setup complete."
-    echo "Log out and back in for the keyd group to take effect, then run: delta apply"
 }
 
 cmd_install_xremap() {
@@ -918,15 +759,12 @@ cmd_install_xremap() {
         echo "    chmod +x ~/.local/bin/xremap"
     fi
     echo ""
-    echo "  After installing, set backend = xremap in delta.conf, then run: delta apply-user"
+    echo "  After installing, run: delta apply"
 }
 
 case "${1:-help}" in
-    setup)           cmd_setup  ;;
     apply)           cmd_apply  ;;
-    apply-user)      cmd_apply_user ;;
     reload)          cmd_reload ;;
-    reload-user)     cmd_reload_user ;;
     install-xremap)  cmd_install_xremap ;;
     render-kwin)     cmd_render_kwin ;;
     render-launcher) cmd_render_launcher ;;
@@ -936,18 +774,10 @@ case "${1:-help}" in
     *)
         echo "Usage: delta <command>"
         echo ""
-        echo "  keyd backend (QMK keyboard, default):"
-        echo "  setup             — (once, with sudo) grants passwordless access to keyd config"
-        echo "  apply             — regenerate configs from delta.conf and reload everything"
-        echo "  reload            — reload modifier backend + KWin script without regenerating"
-        echo ""
-        echo "  xremap backend (standard keyboard, work/immutable machines):"
-        echo "  install-xremap    — print platform-appropriate xremap install instructions"
-        echo "  apply-user        — regenerate xremap config + KWin script, restart xremap service"
-        echo "  reload-user       — restart xremap service only"
-        echo ""
-        echo "  shared:"
+        echo "  apply             — regenerate xremap config + KWin script, restart xremap service"
+        echo "  reload            — restart xremap service + reload KWin script without regenerating"
         echo "  status            — show current state of all components"
+        echo "  install-xremap    — print platform-appropriate xremap install instructions"
         echo "  render-kwin       — regenerate only the KWin script"
         echo "  render-launcher   — regenerate the user systemd launcher unit"
         echo "  render-autostart  — regenerate the KDE autostart entry"
