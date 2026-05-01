@@ -610,6 +610,14 @@ _has_app_bindings() {
     [[ -n "$(get_section "app_bindings")" ]]
 }
 
+_check_input_group() {
+    if ! id -nG | grep -qw input; then
+        echo "WARNING: $USER is not in the 'input' group — xremap cannot open input devices."
+        echo "         Fix: sudo usermod -aG input $USER  (then log out and back in)"
+        return 1
+    fi
+}
+
 _install_xremap_appbindings_service() {
     local xremap_bin
     xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
@@ -619,7 +627,7 @@ _install_xremap_appbindings_service() {
 Description=xremap app-specific key bindings (delta)
 
 [Service]
-ExecStart=${xremap_bin} ${XREMAP_APPBINDINGS_CONF}
+ExecStart=${xremap_bin} --device "keyd virtual keyboard" ${XREMAP_APPBINDINGS_CONF}
 Restart=on-failure
 
 [Install]
@@ -678,6 +686,7 @@ cmd_apply() {
             chmod +x "$LAUNCHER_SCRIPT"
             echo "    wrote $LAUNCHER_SCRIPT"
             if _has_app_bindings; then
+                _check_input_group || { echo "    skipping xremap app-bindings."; return 0; }
                 echo "==> Generating xremap app-bindings config..."
                 mkdir -p "$(dirname "$XREMAP_APPBINDINGS_CONF")"
                 generate_xremap_appbindings > "$XREMAP_APPBINDINGS_CONF"
@@ -710,6 +719,7 @@ cmd_apply_user() {
     echo "    wrote $LAUNCHER_SCRIPT"
 
     echo "==> Installing xremap user service..."
+    _check_input_group || return 1
     _install_xremap_service
     systemctl --user daemon-reload
     systemctl --user enable xremap 2>/dev/null || true
