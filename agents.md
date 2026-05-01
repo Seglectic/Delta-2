@@ -153,7 +153,18 @@ After `delta setup` (keyd path), log out and back in once. After that, `delta ap
 
 For the xremap path (including `[app_bindings]` on the keyd backend), the user must be in the
 `input` group. `delta apply` detects this automatically and runs `sudo usermod -aG input $USER`
-if needed — but a log-out/in is required before xremap can open input devices.
+if needed — but xremap cannot open input devices until a fresh login session picks up that
+group membership. If a desktop logout is not enough on your system, terminate all user sessions
+or reboot.
+
+On the keyd backend, keep xremap app bindings scoped to explicit side devices when possible.
+If xremap auto-grabs the main keyboard, it can block keyd from grabbing the same device and the
+delta modifier will stop working. Use `[app_binding_devices]` in `delta.conf` to name the
+physical device(s) xremap should watch.
+
+On the pure xremap backend, `[xremap_devices]` can be used to scope the main xremap service to
+specific devices. This is useful for composite keyboards that expose multiple interfaces and for
+avoiding accidental grabs of unrelated mice or virtual devices.
 
 ### delta.conf Format
 

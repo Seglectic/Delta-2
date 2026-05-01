@@ -544,19 +544,12 @@ generate_xremap() {
     [[ -z "$mod_key" ]] && mod_key="capslock"
     case "${mod_key,,}" in
         capslock) xmod="CapsLock" ;;
-        f20)      xmod="KEY_F20"  ;;
+        f20)      xmod="F20" ;;
         *)        xmod="$mod_key" ;;
     esac
 
-    # NOTE: The modmap held+keymap chaining relies on xremap treating KEY_F20 as a
-    # virtual modifier. Verified on xremap >=0.10 with --features kde. If combos don't
-    # fire, check: systemctl --user status xremap and journalctl --user -u xremap -f
-    printf 'modmap:\n'
-    printf '  - name: delta-modifier\n'
-    printf '    remap:\n'
-    printf '      %s:\n' "$xmod"
-    printf '        held: KEY_F20\n'
-    printf '        alone: %s\n' "$xmod"
+    printf 'virtual_modifiers:\n'
+    printf '  - %s\n' "$xmod"
     printf '\n'
     printf 'keymap:\n'
     printf '  - name: delta-layer\n'
@@ -567,13 +560,13 @@ generate_xremap() {
         read -r key _ <<< "$rest"
         local xkey
         case "${key,,}" in
-            left)  xkey="Left"  ;;
-            right) xkey="Right" ;;
-            up)    xkey="Up"    ;;
-            down)  xkey="Down"  ;;
+            left)  xkey="left"  ;;
+            right) xkey="right" ;;
+            up)    xkey="up"    ;;
+            down)  xkey="down"  ;;
             *)     xkey="${key,,}" ;;
         esac
-        printf '      KEY_F20-%s: Ctrl-Alt-Super-%s\n' "$xkey" "$xkey"
+        printf '      %s-%s: C-A-Super-%s\n' "$xmod" "$xkey" "$xkey"
     done < <(get_section "bindings")
 
     _emit_xremap_appbindings
@@ -611,29 +604,63 @@ _has_app_bindings() {
 }
 
 _check_input_group() {
-    if ! id -nG | grep -qw input; then
-        echo "==> Adding $USER to the 'input' group..."
-        sudo usermod -aG input "$USER"
-        echo "    Done. Log out and back in, then re-run: delta apply"
+    # id -nG reflects the current session's group credentials.
+    if id -nG | grep -qw input; then
+        return 0
+    fi
+    # getent reads /etc/group directly — if the user is already there, usermod
+    # already ran; skip the sudo but still require a re-login for the kernel
+    # credential to take effect.
+    if getent group input | grep -qw "$USER"; then
+        echo "    $USER is listed in /etc/group for 'input', but this session is still missing that group."
+        echo "    Reboot, or fully terminate all $USER login sessions, then sign in again and re-run: delta apply"
         return 1
     fi
+    echo "==> Adding $USER to the 'input' group..."
+    sudo usermod -aG input "$USER"
+    echo "    Done. Log out and back in, then re-run: delta apply"
+    return 1
 }
 
 _install_xremap_appbindings_service() {
     local xremap_bin
+    local device_args
     xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
+    _xremap_appbindings_device_args device_args
     mkdir -p "$(dirname "$XREMAP_APPBINDINGS_SERVICE")"
     cat > "$XREMAP_APPBINDINGS_SERVICE" <<UNIT
 [Unit]
 Description=xremap app-specific key bindings (delta)
 
 [Service]
-ExecStart=${xremap_bin} --device "keyd virtual keyboard" ${XREMAP_APPBINDINGS_CONF}
+ExecStart=${xremap_bin} ${device_args[*]} ${XREMAP_APPBINDINGS_CONF}
 Restart=on-failure
 
 [Install]
 WantedBy=default.target
 UNIT
+}
+
+_xremap_appbindings_device_args() {
+    local __outvar="$1"
+    local _args=""
+    local _device
+    local _escaped
+
+    while IFS= read -r _device; do
+        [[ -z "${_device// }" ]] && continue
+        _escaped="${_device//\\/\\\\}"
+        _escaped="${_escaped//\"/\\\"}"
+        _args+=" --device \"${_escaped}\""
+    done < <(get_section "app_binding_devices")
+
+    if [[ -z "$_args" ]]; then
+        # Safe default for the keyd backend: only watch keyd's virtual keyboard.
+        # Physical encoder-only devices should be listed in [app_binding_devices].
+        _args=' --device "keyd virtual keyboard"'
+    fi
+
+    printf -v "$__outvar" '%s' "$_args"
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────────────
@@ -657,19 +684,37 @@ _is_immutable() {
 
 _install_xremap_service() {
     local xremap_bin
+    local device_args
     xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
+    _xremap_service_device_args device_args
     mkdir -p "$(dirname "$XREMAP_SERVICE")"
     cat > "$XREMAP_SERVICE" <<UNIT
 [Unit]
 Description=xremap key remapper (delta modifier)
 
 [Service]
-ExecStart=${xremap_bin} ${XREMAP_CONF}
+ExecStart=${xremap_bin}${device_args} ${XREMAP_CONF}
 Restart=on-failure
 
 [Install]
 WantedBy=default.target
 UNIT
+}
+
+_xremap_service_device_args() {
+    local __outvar="$1"
+    local _args=""
+    local _device
+    local _escaped
+
+    while IFS= read -r _device; do
+        [[ -z "${_device// }" ]] && continue
+        _escaped="${_device//\\/\\\\}"
+        _escaped="${_escaped//\"/\\\"}"
+        _args+=" --device \"${_escaped}\""
+    done < <(get_section "xremap_devices")
+
+    printf -v "$__outvar" '%s' "$_args"
 }
 
 cmd_apply() {
