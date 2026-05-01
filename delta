@@ -16,6 +16,8 @@ SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 LAUNCHER_UNIT="$SYSTEMD_USER_DIR/delta-launch@.service"
 XREMAP_CONF="$HOME/.config/xremap/config.yml"
 XREMAP_SERVICE="$SYSTEMD_USER_DIR/xremap.service"
+XREMAP_APPBINDINGS_CONF="$HOME/.config/xremap/app-bindings.yml"
+XREMAP_APPBINDINGS_SERVICE="$SYSTEMD_USER_DIR/xremap-appbindings.service"
 
 # ─── Config parser ─────────────────────────────────────────────────────────────
 # Prints lines from a named [section], stripping comments and blank lines
@@ -573,6 +575,56 @@ generate_xremap() {
         esac
         printf '      KEY_F20-%s: Ctrl-Alt-Super-%s\n' "$xkey" "$xkey"
     done < <(get_section "bindings")
+
+    _emit_xremap_appbindings
+}
+
+generate_xremap_appbindings() {
+    printf 'keymap:\n'
+    _emit_xremap_appbindings
+}
+
+# Shared helper — emits app-specific keymap blocks in xremap format.
+# Called by generate_xremap (appended to main config) and generate_xremap_appbindings (standalone).
+_emit_xremap_appbindings() {
+    local _cur_app="" _appkey _app _key _target
+    while IFS='=' read -r _appkey _target; do
+        _appkey="${_appkey// /}"
+        _target="${_target// /}"
+        [[ -z "$_appkey" || -z "$_target" ]] && continue
+        _app="${_appkey%%.*}"
+        _key="${_appkey##*.}"
+        _target="${_target//+/-}"
+        if [[ "$_app" != "$_cur_app" ]]; then
+            printf '\n  - name: %s-appkeys\n' "$_app"
+            printf '    application:\n'
+            printf '      only: ["%s"]\n' "$_app"
+            printf '    remap:\n'
+            _cur_app="$_app"
+        fi
+        printf '      %s: %s\n' "$_key" "$_target"
+    done < <(get_section "app_bindings")
+}
+
+_has_app_bindings() {
+    [[ -n "$(get_section "app_bindings")" ]]
+}
+
+_install_xremap_appbindings_service() {
+    local xremap_bin
+    xremap_bin=$(command -v xremap 2>/dev/null || echo "$HOME/.local/bin/xremap")
+    mkdir -p "$(dirname "$XREMAP_APPBINDINGS_SERVICE")"
+    cat > "$XREMAP_APPBINDINGS_SERVICE" <<UNIT
+[Unit]
+Description=xremap app-specific key bindings (delta)
+
+[Service]
+ExecStart=${xremap_bin} ${XREMAP_APPBINDINGS_CONF}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+UNIT
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────────────
@@ -625,6 +677,17 @@ cmd_apply() {
             generate_launcher_script > "$LAUNCHER_SCRIPT"
             chmod +x "$LAUNCHER_SCRIPT"
             echo "    wrote $LAUNCHER_SCRIPT"
+            if _has_app_bindings; then
+                echo "==> Generating xremap app-bindings config..."
+                mkdir -p "$(dirname "$XREMAP_APPBINDINGS_CONF")"
+                generate_xremap_appbindings > "$XREMAP_APPBINDINGS_CONF"
+                echo "    wrote $XREMAP_APPBINDINGS_CONF"
+                _install_xremap_appbindings_service
+                systemctl --user daemon-reload
+                systemctl --user enable xremap-appbindings 2>/dev/null || true
+                systemctl --user restart xremap-appbindings
+                echo "    xremap-appbindings service restarted"
+            fi
             echo "==> Generating KWin script..."
             mkdir -p "$(dirname "$KWIN_SCRIPT")"
             generate_kwin > "$KWIN_SCRIPT"
@@ -673,6 +736,10 @@ cmd_reload() {
         *)
             echo "==> Reloading keyd..."
             _restart_keyd
+            if systemctl --user is-active --quiet xremap-appbindings 2>/dev/null; then
+                echo "==> Reloading xremap app-bindings..."
+                systemctl --user restart xremap-appbindings
+            fi
             ;;
     esac
     echo "==> Reloading KWin script..."
