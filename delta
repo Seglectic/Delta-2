@@ -623,7 +623,7 @@ UNIT
 
 _xremap_service_device_args() {
     local __outvar="$1"
-    local _args=""
+    local _args=" --watch=device"
     local _device
     local _escaped
 
@@ -631,8 +631,8 @@ _xremap_service_device_args() {
         [[ -z "${_device// }" ]] && continue
         _escaped="${_device//\\/\\\\}"
         _escaped="${_escaped//\"/\\\"}"
-        _args+=" --device \"${_escaped}\""
-    done < <(get_section "xremap_devices")
+        _args+=" --ignore \"${_escaped}\""
+    done < <(get_section "xremap_ignore_devices")
 
     printf -v "$__outvar" '%s' "$_args"
 }
