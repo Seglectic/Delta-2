@@ -612,8 +612,9 @@ _has_app_bindings() {
 
 _check_input_group() {
     if ! id -nG | grep -qw input; then
-        echo "WARNING: $USER is not in the 'input' group — xremap cannot open input devices."
-        echo "         Fix: sudo usermod -aG input $USER  (then log out and back in)"
+        echo "==> Adding $USER to the 'input' group..."
+        sudo usermod -aG input "$USER"
+        echo "    Done. Log out and back in, then re-run: delta apply"
         return 1
     fi
 }
