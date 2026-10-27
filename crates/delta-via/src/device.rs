@@ -145,6 +145,20 @@ impl Via {
         Ok(decode_matrix(&r[2..], rows, cols))
     }
 
+    /// The raw macro buffer: `count` NUL-terminated macros, in QMK's encoding.
+    pub fn macros(&mut self) -> Result<(u8, Vec<u8>), ViaError> {
+        let count = self.request(ReadCommand::MacroCount)?[1];
+        let r = self.request(ReadCommand::MacroBufferSize)?;
+        let total = u16::from_be_bytes([r[1], r[2]]) as usize;
+        let mut bytes = Vec::with_capacity(total);
+        while bytes.len() < total {
+            let size = (total - bytes.len()).min(MAX_BUFFER_CHUNK as usize) as u8;
+            let r = self.request(ReadCommand::MacroBuffer { offset: bytes.len() as u16, size })?;
+            bytes.extend_from_slice(&r[4..4 + size as usize]);
+        }
+        Ok((count, bytes))
+    }
+
     pub fn layer_count(&mut self) -> Result<u8, ViaError> {
         Ok(self.request(ReadCommand::LayerCount)?[1])
     }

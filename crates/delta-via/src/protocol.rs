@@ -20,6 +20,8 @@ mod id {
     pub const GET_KEYBOARD_VALUE: u8 = 0x02;
     pub const DYNAMIC_KEYMAP_GET_KEYCODE: u8 = 0x04;
     pub const DYNAMIC_KEYMAP_MACRO_GET_COUNT: u8 = 0x0C;
+    pub const DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE: u8 = 0x0D;
+    pub const DYNAMIC_KEYMAP_MACRO_GET_BUFFER: u8 = 0x0E;
     pub const DYNAMIC_KEYMAP_GET_LAYER_COUNT: u8 = 0x11;
     pub const DYNAMIC_KEYMAP_GET_BUFFER: u8 = 0x12;
     pub const DYNAMIC_KEYMAP_GET_ENCODER: u8 = 0x14;
@@ -31,6 +33,8 @@ pub const READ_ONLY_IDS: &[u8] = &[
     id::GET_KEYBOARD_VALUE,
     id::DYNAMIC_KEYMAP_GET_KEYCODE,
     id::DYNAMIC_KEYMAP_MACRO_GET_COUNT,
+    id::DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE,
+    id::DYNAMIC_KEYMAP_MACRO_GET_BUFFER,
     id::DYNAMIC_KEYMAP_GET_LAYER_COUNT,
     id::DYNAMIC_KEYMAP_GET_BUFFER,
     id::DYNAMIC_KEYMAP_GET_ENCODER,
@@ -57,6 +61,12 @@ pub enum ReadCommand {
         col: u8,
     },
     MacroCount,
+    MacroBufferSize,
+    /// A slice of the macro buffer (NUL-separated macro strings).
+    MacroBuffer {
+        offset: u16,
+        size: u8,
+    },
     LayerCount,
     /// A slice of the whole keymap: layers × rows × cols big-endian u16 keycodes.
     KeymapBuffer {
@@ -78,6 +88,8 @@ impl ReadCommand {
             ReadCommand::KeyboardValue(_) => id::GET_KEYBOARD_VALUE,
             ReadCommand::Keycode { .. } => id::DYNAMIC_KEYMAP_GET_KEYCODE,
             ReadCommand::MacroCount => id::DYNAMIC_KEYMAP_MACRO_GET_COUNT,
+            ReadCommand::MacroBufferSize => id::DYNAMIC_KEYMAP_MACRO_GET_BUFFER_SIZE,
+            ReadCommand::MacroBuffer { .. } => id::DYNAMIC_KEYMAP_MACRO_GET_BUFFER,
             ReadCommand::LayerCount => id::DYNAMIC_KEYMAP_GET_LAYER_COUNT,
             ReadCommand::KeymapBuffer { .. } => id::DYNAMIC_KEYMAP_GET_BUFFER,
             ReadCommand::Encoder { .. } => id::DYNAMIC_KEYMAP_GET_ENCODER,
@@ -90,14 +102,17 @@ impl ReadCommand {
         match *self {
             ReadCommand::KeyboardValue(v) => r[1] = v as u8,
             ReadCommand::Keycode { layer, row, col } => r[1..4].copy_from_slice(&[layer, row, col]),
-            ReadCommand::KeymapBuffer { offset, size } => {
+            ReadCommand::KeymapBuffer { offset, size } | ReadCommand::MacroBuffer { offset, size } => {
                 r[1..3].copy_from_slice(&offset.to_be_bytes());
                 r[3] = size.min(MAX_BUFFER_CHUNK);
             }
             ReadCommand::Encoder { layer, encoder, clockwise } => {
                 r[1..4].copy_from_slice(&[layer, encoder, clockwise as u8]);
             }
-            ReadCommand::ProtocolVersion | ReadCommand::MacroCount | ReadCommand::LayerCount => {}
+            ReadCommand::ProtocolVersion
+            | ReadCommand::MacroCount
+            | ReadCommand::MacroBufferSize
+            | ReadCommand::LayerCount => {}
         }
         r
     }
@@ -117,6 +132,8 @@ mod tests {
             ReadCommand::KeyboardValue(KeyboardValue::FirmwareVersion),
             ReadCommand::Keycode { layer: 255, row: 255, col: 255 },
             ReadCommand::MacroCount,
+            ReadCommand::MacroBufferSize,
+            ReadCommand::MacroBuffer { offset: 0, size: 28 },
             ReadCommand::LayerCount,
             ReadCommand::KeymapBuffer { offset: u16::MAX, size: u8::MAX },
             ReadCommand::Encoder { layer: 3, encoder: 1, clockwise: true },

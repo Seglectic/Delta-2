@@ -13,6 +13,8 @@ pub struct Paths {
     pub layouts: PathBuf,
     /// VIA definitions fetched from usevia.app, by USB ID.
     pub layout_cache: PathBuf,
+    /// Keymap backups (`delta keyboard backup`).
+    pub backups: PathBuf,
     /// The legacy bash install, used as the default `delta import` source.
     pub legacy_conf: PathBuf,
 }
@@ -32,6 +34,7 @@ impl Paths {
             kwin_script: data_home.join("kwin/scripts/delta-tile/contents/code/main.js"),
             layouts: config_home.join("delta/layouts"),
             layout_cache: cache_home.join("delta/layouts"),
+            backups: data_home.join("delta/backups"),
             legacy_conf: home.join(".local/bin/delta/delta.conf"),
         }
     }

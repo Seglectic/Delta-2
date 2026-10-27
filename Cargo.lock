@@ -676,6 +676,7 @@ dependencies = [
  "clap",
  "delta-core",
  "delta-via",
+ "serde_json",
  "zbus",
 ]
 

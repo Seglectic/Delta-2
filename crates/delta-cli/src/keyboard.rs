@@ -4,6 +4,8 @@ use anyhow::{Context, Result, bail};
 use delta_core::paths::Paths;
 use delta_via::keycode::decode;
 use delta_via::{Definition, Via, discover};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Terminal characters per key unit, horizontally and vertically.
 const CELL_W: f64 = 6.0;
@@ -47,6 +49,77 @@ pub fn dump(paths: &Paths, only_layer: Option<u8>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Save everything VIA can read about the first keyboard, so it can be restored
+/// exactly after a firmware update resets it. Raw keycodes are the source of
+/// truth; names are only there for people reading the file.
+pub fn backup(paths: &Paths, out: Option<PathBuf>) -> Result<()> {
+    let devices = discover();
+    let Some(device) = devices.first() else { bail!("No keyboards with a VIA interface found.") };
+    let def = Definition::load(device.vendor_id, device.product_id, &paths.layouts, &paths.layout_cache, true)?;
+    let mut via = Via::open(device)?;
+
+    let protocol = via.protocol_version()?;
+    let layout_options = via.layout_options()?;
+    let keymap = via.keymap(def.rows, def.cols)?;
+    let encoders = via.encoders(keymap.len() as u8, def.encoder_count())?;
+    let (macro_count, macro_buffer) = via.macros()?;
+
+    let name = |c: u16| decode(c, &def.custom_keycodes).name;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let json = serde_json::json!({
+        "format": "delta-keymap-backup/1",
+        "taken_unix": now,
+        "keyboard": {
+            "name": def.name,
+            "device_name": device.name,
+            "vendor_id": format!("{:04x}", device.vendor_id),
+            "product_id": format!("{:04x}", device.product_id),
+            "via_protocol": protocol,
+        },
+        "matrix": { "rows": def.rows, "cols": def.cols },
+        "layout_options": layout_options,
+        "layers": keymap,
+        "encoders": encoders,
+        "macros": { "count": macro_count, "buffer_hex": macro_buffer.iter().map(|b| format!("{b:02x}")).collect::<String>() },
+        "names": {
+            "layers": keymap.iter().map(|l| l.iter().map(|r| r.iter().map(|c| name(*c)).collect::<Vec<_>>()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            "encoders": encoders.iter().map(|l| l.iter().map(|(a, b)| [name(*a), name(*b)]).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        },
+    });
+
+    let out = out.unwrap_or_else(|| {
+        let date = civil_date(now);
+        paths.backups.join(format!("{:04x}_{:04x}-{date}.json", device.vendor_id, device.product_id))
+    });
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&out, serde_json::to_string_pretty(&json)? + "\n")?;
+    println!(
+        "Saved {} ({} layers, {} knob(s), {macro_count} macro slots) to {}",
+        def.name,
+        keymap.len(),
+        def.encoder_count(),
+        out.display()
+    );
+    Ok(())
+}
+
+/// Unix seconds → `YYYY-MM-DD` (UTC), without a date library.
+fn civil_date(unix: u64) -> String {
+    // Howard Hinnant's days-to-civil algorithm
+    let z = (unix / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Lay the keys out on a character grid at their physical positions.

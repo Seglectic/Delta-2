@@ -70,6 +70,12 @@ enum KeyboardCmd {
         #[arg(long)]
         layer: Option<u8>,
     },
+    /// Save the whole keymap (layers, knobs, layout options, macros) to JSON, read-only
+    Backup {
+        /// Output file (default: ~/.local/share/delta/backups/<vid>_<pid>-<date>.json)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -102,6 +108,7 @@ fn main() -> Result<()> {
         Cmd::Status => cmd_status(&paths),
         Cmd::Keyboard(KeyboardCmd::List) => keyboard::list(&paths),
         Cmd::Keyboard(KeyboardCmd::Dump { layer }) => keyboard::dump(&paths, layer),
+        Cmd::Keyboard(KeyboardCmd::Backup { out }) => keyboard::backup(&paths, out),
         Cmd::Shortcut { name, component } if name == "list" => {
             for s in zbus::block_on(system::list_shortcuts())? {
                 println!("{:<14} {:<40} {}", s.component, s.name, s.label);
