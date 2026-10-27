@@ -218,10 +218,10 @@ fn watch_knobs(app: AppHandle, state: State<'_, AppState>) {
         }
         let knob_keys = state.knob_keys.clone();
         listen_once(&app, dev.path, move |app, event| {
-            if let delta_input::Event::Button { code, pressed: true, .. } = event {
-                if let Some(turn) = knob_keys.lock().unwrap().get(&code).cloned() {
-                    let _ = app.emit("knob", turn);
-                }
+            if let delta_input::Event::Button { code, pressed: true, .. } = event
+                && let Some(turn) = knob_keys.lock().unwrap().get(&code).cloned()
+            {
+                let _ = app.emit("knob", turn);
             }
         });
     }
