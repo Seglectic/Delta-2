@@ -1,0 +1,36 @@
+/* Catppuccin Mocha, to match the Konsole theme */
+:root {
+  --crust: #11111b;
+  --mantle: #181825;
+  --base: #1e1e2e;
+  --surface0: #313244;
+  --surface1: #45475a;
+  --surface2: #585b70;
+  --overlay0: #6c7086;
+  --subtext0: #a6adc8;
+  --text: #cdd6f4;
+  --lavender: #b4befe;
+  --blue: #89b4fa;
+  --teal: #94e2d5;
+  --mauve: #cba6f7;
+  --mauve-deep: #3b2f55;
+  --peach: #fab387;
+  --red: #f38ba8;
+
+  --key-alpha: #2a2b3d;
+  --key-mod: #35364b;
+  --key-accent: #4a3d5e;
+
+  --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--base);
+  color: var(--text);
+  font-family: "Inter", "Noto Sans", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}

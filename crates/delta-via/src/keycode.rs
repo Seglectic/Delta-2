@@ -110,7 +110,7 @@ const BASIC: &[(u16, &str, &str)] = &[
 ];
 
 /// A decoded keycode: QMK-style name (`KC_F13`, `MO(1)`) and a short key-cap label.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Keycode {
     pub code: u16,
     pub name: String,
