@@ -1,12 +1,14 @@
 //! Delta's GUI backend. Reads keyboards over VIA (read-only), streams which keys are
-//! held, and loads the Delta config. The window is Svelte (`app/src`).
+//! held, listens to mice and knob turns without grabbing anything, and loads the
+//! Delta config. The window is Svelte (`app/src`).
 
 use delta_core::paths::Paths;
 use delta_core::{Config, import};
 use delta_via::keycode::{Keycode, decode};
 use delta_via::{Definition, Via, discover};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +30,25 @@ struct AppState {
     keyboards: Mutex<HashMap<String, Open>>,
     /// Set to false to stop the running key watcher.
     watching: Mutex<Option<Arc<AtomicBool>>>,
+    /// Input devices that already have a listener thread (they run for the app's life).
+    listening: Mutex<HashSet<PathBuf>>,
+    /// evdev key code a knob turn sends → which keyboard, knob and direction.
+    knob_keys: Arc<Mutex<HashMap<u16, KnobTurn>>>,
+}
+
+#[derive(Clone, Serialize)]
+struct KnobTurn {
+    /// The keyboard's VIA (hidraw) path, as the UI knows it.
+    path: String,
+    encoder: u8,
+    direction: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+struct InputEvent {
+    path: String,
+    #[serde(flatten)]
+    event: delta_input::Event,
 }
 
 #[derive(Serialize)]
@@ -104,6 +125,7 @@ async fn keyboards(state: State<'_, AppState>) -> Result<Vec<KeyboardInfo>, Stri
                     keymap.iter().map(|l| l.iter().map(|r| r.iter().map(|c| name(*c)).collect()).collect()).collect();
                 info.encoders =
                     encoders.iter().map(|l| l.iter().map(|(ccw, cw)| (name(*ccw), name(*cw))).collect()).collect();
+                remember_knob_keys(&state, &path, &encoders);
                 state.keyboards.lock().unwrap().insert(path, Open { via, rows: def.rows, cols: def.cols });
             }
             Err(e) => info.error = Some(e.to_string()),
@@ -112,6 +134,97 @@ async fn keyboards(state: State<'_, AppState>) -> Result<Vec<KeyboardInfo>, Stri
         out.push(info);
     }
     Ok(out)
+}
+
+/// Note which evdev keys each knob turn sends, so the knob listener can light it up.
+fn remember_knob_keys(state: &AppState, path: &str, encoders: &[Vec<(u16, u16)>]) {
+    let mut keys = state.knob_keys.lock().unwrap();
+    keys.retain(|_, turn| turn.path != path);
+    for layer in encoders {
+        for (i, (ccw, cw)) in layer.iter().enumerate() {
+            for (code, direction) in [(ccw, "left"), (cw, "right")] {
+                if let Some(evdev) = qmk_to_evdev(*code) {
+                    keys.entry(evdev).or_insert(KnobTurn { path: path.into(), encoder: i as u8, direction });
+                }
+            }
+        }
+    }
+}
+
+/// QMK keycode → Linux key code, for the keys knobs usually send: F13–F24 and volume.
+fn qmk_to_evdev(code: u16) -> Option<u16> {
+    match code {
+        0x68..=0x73 => Some(183 + (code - 0x68)), // KC_F13..KC_F24 → KEY_F13..KEY_F24
+        0xA8 => Some(113),                        // KC_AUDIO_MUTE → KEY_MUTE
+        0xA9 => Some(115),                        // KC_AUDIO_VOL_UP → KEY_VOLUMEUP
+        0xAA => Some(114),                        // KC_AUDIO_VOL_DOWN → KEY_VOLUMEDOWN
+        _ => None,
+    }
+}
+
+/// Start a passive listener on `path` (once per device). Never grabs it.
+fn listen_once(
+    app: &AppHandle,
+    path: PathBuf,
+    mut handle: impl FnMut(&AppHandle, delta_input::Event) + Send + 'static,
+) {
+    if !app.state::<AppState>().listening.lock().unwrap().insert(path.clone()) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _ = delta_input::listen(&path, |event| {
+            handle(&app, event);
+            true
+        });
+        // Device gone: allow a later re-listen
+        app.state::<AppState>().listening.lock().unwrap().remove(&path);
+    });
+}
+
+/// Hardware mice, for the device tabs.
+#[tauri::command]
+fn mice() -> Vec<delta_input::InputDevice> {
+    delta_input::list().into_iter().filter(|d| d.pointer && !d.virtual_device).collect()
+}
+
+/// Stream a mouse's buttons and wheel as `input` events. Motion is never read.
+#[tauri::command]
+fn watch_mouse(app: AppHandle, path: String) {
+    let label = path.clone();
+    listen_once(&app, PathBuf::from(&path), move |app, event| {
+        let _ = app.emit("input", InputEvent { path: label.clone(), event });
+    });
+}
+
+/// Light up knobs when they turn. Turns aren't switches, so VIA can't report them;
+/// they arrive as key presses, from xremap's output device (xremap holds the
+/// keyboard) or from the keyboard itself when nothing grabs it. Only the knob's own
+/// keys are forwarded: typing never leaves this listener.
+#[tauri::command]
+fn watch_knobs(app: AppHandle, state: State<'_, AppState>) {
+    let ids: HashSet<(u16, u16)> = state
+        .keyboards
+        .lock()
+        .unwrap()
+        .keys()
+        .filter_map(|p| discover().into_iter().find(|d| d.path.display().to_string() == *p))
+        .map(|d| (d.vendor_id, d.product_id))
+        .collect();
+    for dev in delta_input::list() {
+        let ours = ids.contains(&(dev.vendor_id, dev.product_id));
+        if !(ours || dev.name == "xremap") {
+            continue;
+        }
+        let knob_keys = state.knob_keys.clone();
+        listen_once(&app, dev.path, move |app, event| {
+            if let delta_input::Event::Button { code, pressed: true, .. } = event {
+                if let Some(turn) = knob_keys.lock().unwrap().get(&code).cloned() {
+                    let _ = app.emit("knob", turn);
+                }
+            }
+        });
+    }
 }
 
 /// Start streaming `pressed` events for one keyboard (stops any previous stream).
@@ -186,7 +299,7 @@ fn config() -> ConfigInfo {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![keyboards, watch_keys, config])
+        .invoke_handler(tauri::generate_handler![keyboards, watch_keys, config, mice, watch_mouse, watch_knobs])
         .run(tauri::generate_context!())
         .expect("error while running Delta");
 }

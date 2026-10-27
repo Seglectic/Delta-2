@@ -84,3 +84,23 @@ export interface ConfigInfo {
   legacy: boolean;
   problems: string[];
 }
+
+export interface InputDevice {
+  path: string;
+  name: string;
+  vendor_id: number;
+  product_id: number;
+  pointer: boolean;
+  virtual_device: boolean;
+}
+
+export type InputEvent = { path: string } & (
+  | { kind: "button"; code: number; name: string; pressed: boolean }
+  | { kind: "wheel"; axis: "vertical" | "horizontal"; notches: number }
+);
+
+export interface KnobTurn {
+  path: string;
+  encoder: number;
+  direction: "left" | "right";
+}

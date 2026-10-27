@@ -13,11 +13,13 @@
     /** Show what keys do while the delta modifier is held. */
     deltaView: boolean;
     pressed: Set<string>;
+    /** Knobs turning right now: encoder → direction. */
+    turning: Record<number, "left" | "right">;
     selected: string | null;
     onselect: (id: string) => void;
   }
 
-  let { definition, layer, baseLayer, bindings, modifierKey, deltaView, pressed, selected, onselect }: Props =
+  let { definition, layer, baseLayer, bindings, modifierKey, deltaView, pressed, turning, selected, onselect }: Props =
     $props();
 
   /** Pixels per key unit, and the gap around each cap. */
@@ -67,9 +69,11 @@
     {@const id = keyId(k)}
     {@const c = cap(k)}
     {@const isPressed = pressed.has(`${k.row},${k.col}`)}
+    {@const turn = k.encoder !== null ? turning[k.encoder] : undefined}
     <g
       class="key {k.color ?? 'alpha'}"
       class:pressed={isPressed}
+      class:turning={!!turn}
       class:selected={selected === id}
       class:active={c.active}
       class:dim={c.dim}
@@ -90,11 +94,16 @@
           r={(Math.min(k.w, k.h) * U) / 2 - GAP}
         />
         <circle class="knob-ring" cx={(k.x + k.w / 2) * U} cy={(k.y + k.h / 2) * U} r={(Math.min(k.w, k.h) * U) / 2 - 9} />
+
       {:else}
         <rect class="cap" x={k.x * U + GAP} y={k.y * U + GAP} width={k.w * U - GAP * 2} height={k.h * U - GAP * 2} rx="7" />
       {/if}
-      <text class="main" x={(k.x + k.w / 2) * U} y={(k.y + k.h / 2) * U + (c.sub ? -4 : 5)}>{c.main}</text>
-      {#if c.sub}
+      {#if turn}
+        <text class="main turn" x={(k.x + k.w / 2) * U} y={(k.y + k.h / 2) * U + 7}>{turn === "left" ? "↺" : "↻"}</text>
+      {:else}
+        <text class="main" x={(k.x + k.w / 2) * U} y={(k.y + k.h / 2) * U + (c.sub ? -4 : 5)}>{c.main}</text>
+      {/if}
+      {#if c.sub && !turn}
         <text class="sub" x={(k.x + k.w / 2) * U} y={(k.y + k.h / 2) * U + 14}>{c.sub}</text>
       {/if}
     </g>
@@ -167,6 +176,18 @@
   .key:focus-visible .cap {
     stroke: var(--lavender);
     stroke-width: 2.5;
+  }
+  .turning .cap {
+    fill: var(--teal);
+    filter: drop-shadow(0 0 8px var(--teal));
+  }
+  .turning .main,
+  .turning .sub {
+    fill: var(--crust);
+  }
+  .turning .turn {
+    font-size: 22px;
+    font-weight: 700;
   }
   .pressed .cap {
     fill: var(--blue);

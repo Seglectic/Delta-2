@@ -4,11 +4,19 @@
   import { listen } from "@tauri-apps/api/event";
   import Keyboard from "./lib/Keyboard.svelte";
   import KeyPanel from "./lib/KeyPanel.svelte";
+  import MousePanel from "./lib/MousePanel.svelte";
   import { keyId, modifierLabel, qmkName } from "./lib/bindings";
-  import type { ConfigInfo, KeyboardInfo, Pressed } from "./lib/types";
+  import type { ConfigInfo, InputDevice, KeyboardInfo, KnobTurn, Pressed } from "./lib/types";
 
   let keyboards = $state<KeyboardInfo[]>([]);
+  let mice = $state<InputDevice[]>([]);
   let current = $state(0);
+  /** Which device tab is open: a keyboard index, or a mouse's input path. */
+  let tab = $state<{ kind: "keyboard"; index: number } | { kind: "mouse"; path: string }>({
+    kind: "keyboard",
+    index: 0,
+  });
+  let turning = $state<Record<number, "left" | "right">>({});
   let configInfo = $state<ConfigInfo | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -55,6 +63,27 @@
   });
 
   const selectedKey = $derived(definition?.keys.find((k) => keyId(k) === selected) ?? null);
+  const mouse = $derived(tab.kind === "mouse" ? mice.find((m) => m.path === (tab as { path: string }).path) : undefined);
+
+  async function openKeyboard(i: number) {
+    tab = { kind: "keyboard", index: i };
+    if (i !== current) {
+      current = i;
+      pressed = new Set();
+      if (keyboards[i]?.definition) await invoke("watch_keys", { path: keyboards[i].path });
+    }
+  }
+
+  const knobTimers: Record<number, ReturnType<typeof setTimeout>> = {};
+  function knobTurned(t: KnobTurn) {
+    if (t.path !== keyboard?.path) return;
+    turning = { ...turning, [t.encoder]: t.direction };
+    clearTimeout(knobTimers[t.encoder]);
+    knobTimers[t.encoder] = setTimeout(() => {
+      const { [t.encoder]: _, ...rest } = turning;
+      turning = rest;
+    }, 180);
+  }
 
   function readNumber(key: string, fallback: number): number {
     try {
@@ -76,12 +105,15 @@
     loading = true;
     error = null;
     try {
-      [configInfo, keyboards] = await Promise.all([
+      [configInfo, keyboards, mice] = await Promise.all([
         invoke<ConfigInfo>("config"),
         invoke<KeyboardInfo[]>("keyboards"),
+        invoke<InputDevice[]>("mice"),
       ]);
       current = Math.max(0, keyboards.findIndex((k) => k.definition && !k.error));
+      if (tab.kind === "keyboard") tab = { kind: "keyboard", index: current };
       if (keyboards[current]?.definition) await invoke("watch_keys", { path: keyboards[current].path });
+      await invoke("watch_knobs");
     } catch (e) {
       error = String(e);
     } finally {
@@ -94,6 +126,7 @@
       listen<Pressed>("pressed", (e) => {
         if (e.payload.path === keyboard?.path) pressed = new Set(e.payload.keys.map(([r, c]) => `${r},${c}`));
       }),
+      listen<KnobTurn>("knob", (e) => knobTurned(e.payload)),
       listen<string>("keyboard-error", (e) => {
         error = `Lost the keyboard: ${e.payload}`;
         pressed = new Set();
@@ -109,8 +142,12 @@
     <div class="title">
       <span class="logo">Δ</span>
       <div>
-        <h1>{definition?.name ?? "Delta"}</h1>
-        {#if keyboard}
+        <h1>{mouse ? mouse.name : (definition?.name ?? "Delta")}</h1>
+        {#if mouse}
+          <span class="muted"
+            >{mouse.vendor_id.toString(16).padStart(4, "0")}:{mouse.product_id.toString(16).padStart(4, "0")} · {mouse.path}</span
+          >
+        {:else if keyboard}
           <span class="muted"
             >{keyboard.device_name} · {keyboard.vendor_id.toString(16).padStart(4, "0")}:{keyboard.product_id
               .toString(16)
@@ -119,13 +156,6 @@
         {/if}
       </div>
     </div>
-    {#if keyboards.length > 1}
-      <select bind:value={current} onchange={() => invoke("watch_keys", { path: keyboards[current].path })}>
-        {#each keyboards as k, i}
-          <option value={i}>{k.definition?.name ?? k.device_name}</option>
-        {/each}
-      </select>
-    {/if}
     <button class="ghost" onclick={load} disabled={loading}>{loading ? "Reading…" : "Re-read"}</button>
   </header>
 
@@ -136,7 +166,26 @@
     <p class="banner error">{keyboard.error}</p>
   {/if}
 
-  {#if definition && keyboard}
+  {#if keyboards.length || mice.length}
+    <nav class="devices">
+      {#each keyboards as k, i}
+        <button class:on={tab.kind === "keyboard" && i === current} onclick={() => openKeyboard(i)}>
+          ⌨ {k.definition?.name ?? k.device_name}
+        </button>
+      {/each}
+      {#each mice as m (m.path)}
+        <button class:on={mouse?.path === m.path} onclick={() => (tab = { kind: "mouse", path: m.path })}>
+          🖱 {m.name}
+        </button>
+      {/each}
+    </nav>
+  {/if}
+
+  {#if mouse}
+    {#key mouse.path}
+      <MousePanel device={mouse} />
+    {/key}
+  {:else if definition && keyboard}
     <nav class="layers">
       {#each layerNames as name, i}
         <button class:on={i === baseLayer} class:shown={i === shownLayer && i !== baseLayer} onclick={() => chooseLayer(i)}>
@@ -158,6 +207,7 @@
         {modifierKey}
         {deltaView}
         {pressed}
+        {turning}
         {selected}
         onselect={(id) => (selected = selected === id ? null : id)}
       />
@@ -226,6 +276,13 @@
     margin: 0;
     font-size: 18px;
   }
+  .devices {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--surface0);
+    padding-bottom: 12px;
+  }
   .layers {
     display: flex;
     gap: 6px;
@@ -234,8 +291,7 @@
   .spacer {
     flex: 1;
   }
-  button,
-  select {
+  button {
     font: inherit;
     font-size: 13px;
     color: var(--text);

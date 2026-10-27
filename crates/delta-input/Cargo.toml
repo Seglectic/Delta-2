@@ -1,0 +1,10 @@
+[package]
+name = "delta-input"
+description = "Passive (never grabbing) reader for Linux input devices: buttons, keys and wheels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+evdev = "0.13"
+serde = { workspace = true }
