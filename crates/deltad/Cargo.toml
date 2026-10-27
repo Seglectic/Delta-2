@@ -8,5 +8,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 delta-core = { path = "../delta-core" }
+serde_json = "1"
 tokio.workspace = true
 zbus.workspace = true

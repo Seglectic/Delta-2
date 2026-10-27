@@ -350,49 +350,28 @@ async fn shortcuts() -> Result<Vec<delta_core::system::Shortcut>, String> {
     delta_core::system::list_shortcuts().await.map_err(|e| e.to_string())
 }
 
-#[derive(Serialize)]
-struct AppSuggestion {
-    /// What xremap matches on (the window class), e.g. `org.kde.konsole`, `firefox`.
-    class: String,
-    name: String,
+/// Installed apps (from .desktop files), for the "only in this app" picker.
+#[tauri::command]
+fn app_suggestions() -> Vec<delta_core::apps::AppChoice> {
+    delta_core::apps::installed_apps()
 }
 
-/// Installed apps, for the "only in this app" picker: window class from each
-/// .desktop file's StartupWMClass, or its desktop ID.
+/// Apps with open windows, with launch commands, from deltad (which asks KWin).
+/// Returned as deltad's JSON text.
 #[tauri::command]
-fn app_suggestions() -> Vec<AppSuggestion> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let dirs = [
-        "/usr/share/applications".to_string(),
-        "/var/lib/flatpak/exports/share/applications".to_string(),
-        format!("{home}/.local/share/applications"),
-        format!("{home}/.local/share/flatpak/exports/share/applications"),
-    ];
-    let mut out: Vec<AppSuggestion> = Vec::new();
-    for dir in dirs {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let Some(id) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".desktop")) else {
-                continue;
-            };
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let field = |key: &str| {
-                text.lines()
-                    .skip_while(|l| l.trim() != "[Desktop Entry]")
-                    .take_while(|l| !l.starts_with('[') || l.trim() == "[Desktop Entry]")
-                    .find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(str::trim))
-            };
-            if field("NoDisplay") == Some("true") || field("Type") != Some("Application") {
-                continue;
-            }
-            let class = field("StartupWMClass").unwrap_or(id).to_lowercase();
-            if !out.iter().any(|a| a.class == class) {
-                out.push(AppSuggestion { class, name: field("Name").unwrap_or(id).to_string() });
-            }
-        }
-    }
-    out.sort_by_key(|a| a.name.to_lowercase());
-    out
+async fn running_apps() -> Result<String, String> {
+    let conn = zbus::Connection::session().await.map_err(|e| e.to_string())?;
+    let reply = conn
+        .call_method(
+            Some("org.seglectic.Delta"),
+            "/org/seglectic/Delta",
+            Some("org.seglectic.Delta1"),
+            "ListRunningApps",
+            &(),
+        )
+        .await
+        .map_err(|e| format!("couldn't ask deltad (is it running?): {e}"))?;
+    reply.body().deserialize::<String>().map_err(|e| e.to_string())
 }
 
 /// deltad's status, or None when it isn't running (before the cutover).
@@ -420,6 +399,7 @@ pub fn run() {
             save_config,
             shortcuts,
             app_suggestions,
+            running_apps,
             deltad_status
         ])
         .run(tauri::generate_context!())

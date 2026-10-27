@@ -114,6 +114,21 @@ pub async fn reload_kwin(script: &Path) -> Result<(), SystemError> {
     Ok(())
 }
 
+/// Load and start a KWin script under `name`, replacing one already loaded with it.
+pub async fn run_kwin_script(script: &Path, name: &str) -> Result<(), SystemError> {
+    let conn = zbus::Connection::session().await?;
+    kwin_call(&conn, "unloadScript", &(name,)).await?;
+    kwin_call(&conn, "loadScript", &(script.display().to_string(), name)).await?;
+    kwin_call(&conn, "start", &()).await?;
+    Ok(())
+}
+
+pub async fn unload_kwin_script(name: &str) -> Result<(), SystemError> {
+    let conn = zbus::Connection::session().await?;
+    kwin_call(&conn, "unloadScript", &(name,)).await?;
+    Ok(())
+}
+
 /// Whether KWin currently has the delta script loaded.
 pub async fn kwin_script_loaded() -> Result<bool, SystemError> {
     let conn = zbus::Connection::session().await?;

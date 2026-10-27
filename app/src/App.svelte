@@ -9,7 +9,7 @@
   import { keyId, modifierLabel, qmkName } from "./lib/bindings";
   import type {
     App as DeltaApp,
-    AppSuggestion,
+    AppChoice,
     Binding,
     Config,
     ConfigInfo,
@@ -35,7 +35,8 @@
   let editorProblems = $state<string[]>([]);
   let saving = $state(false);
   let shortcuts = $state<Shortcut[]>([]);
-  let suggestions = $state<AppSuggestion[]>([]);
+  let suggestions = $state<AppChoice[]>([]);
+  let running = $state<AppChoice[]>([]);
   /** deltad's status map, or null when it isn't running. */
   let deltad = $state<Record<string, string> | null>(null);
   let configInfo = $state<ConfigInfo | null>(null);
@@ -94,7 +95,12 @@
     editorProblems = [];
     editing = { keyName, binding };
     if (!shortcuts.length) invoke<Shortcut[]>("shortcuts").then((s) => (shortcuts = s)).catch(() => {});
-    if (!suggestions.length) invoke<AppSuggestion[]>("app_suggestions").then((s) => (suggestions = s));
+    if (!suggestions.length) invoke<AppChoice[]>("app_suggestions").then((s) => (suggestions = s));
+    // Fresh every time: what's open changes
+    running = [];
+    invoke<string>("running_apps")
+      .then((json) => (running = JSON.parse(json)))
+      .catch(() => {});
   }
 
   async function save(config: Config): Promise<boolean> {
@@ -321,6 +327,7 @@
       {modifierKey}
       {shortcuts}
       {suggestions}
+      {running}
       problems={editorProblems}
       {saving}
       onsave={saveBinding}

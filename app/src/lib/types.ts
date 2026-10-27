@@ -84,9 +84,15 @@ export interface Shortcut {
   label: string;
 }
 
-export interface AppSuggestion {
-  class: string;
+/** An app offered by the pickers (running or installed), ready for `[[apps]]`. */
+export interface AppChoice {
+  label: string;
   name: string;
+  /** Window class; what "only in" matches. */
+  class: string;
+  launch: string;
+  match: string[];
+  caption: string | null;
 }
 
 export interface Config {

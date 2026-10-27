@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { ActionKind, App, AppSuggestion, Binding, Config, Shortcut } from "./types";
+  import type { ActionKind, App, AppChoice, Binding, Config, Shortcut } from "./types";
   import { isWindowAction, modifierLabel, typesText } from "./bindings";
 
   interface Props {
@@ -11,7 +11,10 @@
     config: Config;
     modifierKey: string;
     shortcuts: Shortcut[];
-    suggestions: AppSuggestion[];
+    /** Installed apps. */
+    suggestions: AppChoice[];
+    /** Apps with open windows right now. */
+    running: AppChoice[];
     /** Problems from the last save attempt. */
     problems: string[];
     saving: boolean;
@@ -19,7 +22,7 @@
     oncancel: () => void;
   }
 
-  let { keyName, binding, config, modifierKey, shortcuts, suggestions, problems, saving, onsave, oncancel }: Props =
+  let { keyName, binding, config, modifierKey, shortcuts, suggestions, running, problems, saving, onsave, oncancel }: Props =
     $props();
 
   const ACTIONS: [ActionKind, string][] = [
@@ -77,6 +80,30 @@
       : shortcuts.filter((s) => (s.label + " " + s.name).toLowerCase().includes(shortcutQuery.toLowerCase())).slice(0, 8),
   );
   const warnTyping = $derived(layer === "base" && !scoped && typesText(keyName));
+
+  /** The configured app a running/installed app already is, if any. */
+  function configuredAs(c: AppChoice): App | undefined {
+    return (seed.config.apps ?? []).find(
+      (a) => a.name === c.name || (a.match ?? [a.name]).some((m) => c.match.includes(m.toLowerCase())),
+    );
+  }
+
+  /** Pick a running app: select it if it's configured, otherwise fill in a new one. */
+  function pickRunning(c: AppChoice) {
+    const existing = configuredAs(c);
+    if (existing) {
+      newApp = false;
+      appName = existing.name;
+      return;
+    }
+    const taken = new Set((seed.config.apps ?? []).map((a) => a.name));
+    let name = c.name;
+    for (let n = 2; taken.has(name); n++) name = `${c.name}-${n}`;
+    newApp = true;
+    newAppName = name;
+    newAppLaunch = c.launch;
+    newAppMatch = c.match.join(", ");
+  }
 
   /** Unique, stable ID for a new binding (edits keep theirs: KDE keys shortcuts by ID). */
   function newId(): string {
@@ -169,8 +196,17 @@
             required={scoped}
           />
         </label>
+        {#if scoped && !windowAction && running.length}
+          <div class="chips">
+            {#each running as r}
+              <button type="button" class:on={onlyIn === r.class} onclick={() => (onlyIn = r.class)} title={r.caption ?? ""}
+                >{r.label}</button
+              >
+            {/each}
+          </div>
+        {/if}
         <datalist id="app-classes">
-          {#each suggestions as s}<option value={s.class}>{s.name}</option>{/each}
+          {#each [...running, ...suggestions] as s}<option value={s.class}>{s.label}</option>{/each}
         </datalist>
         {#if windowAction}
           <p class="hint">Window actions apply everywhere for now.</p>
@@ -204,6 +240,22 @@
             <input type="number" min="100" bind:value={fixedW} /> × <input type="number" min="100" bind:value={fixedH} /> px
           </div>
         {:else if kind === "app"}
+          {#if running.length}
+            <p class="hint">Running now</p>
+            <div class="chips">
+              {#each running as r}
+                {@const existing = configuredAs(r)}
+                <button
+                  type="button"
+                  class:on={existing ? !newApp && appName === existing.name : newApp && newAppLaunch === r.launch}
+                  onclick={() => pickRunning(r)}
+                  title={r.caption ?? r.class}
+                >
+                  {r.label}{#if existing}<span class="tag">in Delta</span>{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
           {#if !newApp}
             <div class="row">
               <select bind:value={appName}>
@@ -372,6 +424,22 @@
     border: none;
     color: var(--blue);
     padding: 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chips button {
+    padding: 4px 10px;
+  }
+  .tag {
+    margin-left: 6px;
+    font-size: 10px;
+    color: var(--teal);
+  }
+  .on .tag {
+    color: var(--crust);
   }
   .matches {
     list-style: none;

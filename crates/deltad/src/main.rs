@@ -6,10 +6,12 @@
 
 use anyhow::Result;
 use delta_core::paths::Paths;
-use delta_core::{Config, system};
+use delta_core::{Config, apps, system};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
+use tokio::sync::oneshot;
 use zbus::object_server::SignalEmitter;
 use zbus::{fdo, interface};
 
@@ -17,6 +19,8 @@ const BUS_NAME: &str = "org.seglectic.Delta";
 const OBJECT_PATH: &str = "/org/seglectic/Delta";
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const KWIN_WAIT: Duration = Duration::from_secs(60);
+/// Name of the one-shot KWin script that lists open windows.
+const LIST_WINDOWS: &str = "delta-list-windows";
 
 struct Delta {
     paths: Paths,
@@ -28,6 +32,8 @@ struct Delta {
     /// `None` until the first read.
     seen: Option<Option<SystemTime>>,
     last_error: Option<String>,
+    /// Waiting `ListRunningApps` call, answered by the KWin script's `ReportWindows`.
+    window_reply: Mutex<Option<oneshot::Sender<String>>>,
 }
 
 impl Delta {
@@ -37,7 +43,7 @@ impl Delta {
             .and_then(|exe| exe.canonicalize().ok())
             .and_then(|exe| exe.parent().map(|dir| dir.join("delta")))
             .unwrap_or_else(|| "delta".into());
-        Self { paths, launcher, config: None, seen: None, last_error: None }
+        Self { paths, launcher, config: None, seen: None, last_error: None, window_reply: Mutex::new(None) }
     }
 
     fn file_mtime(&self) -> Option<SystemTime> {
@@ -141,6 +147,35 @@ impl Delta {
     /// Run a binding's action by ID, as if its hotkey were pressed.
     async fn trigger(&self, id: String) -> fdo::Result<()> {
         system::invoke_shortcut("kwin", &id).await.map_err(|e| fdo::Error::Failed(e.to_string()))
+    }
+
+    /// Apps with open windows, as JSON (`delta_core::apps::AppChoice` list): name,
+    /// window class, launch command and match strings, ready for `[[apps]]`.
+    async fn list_running_apps(&self) -> fdo::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        *self.window_reply.lock().unwrap() = Some(tx);
+
+        let dir =
+            std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("delta");
+        let script = dir.join("list-windows.js");
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&script, apps::LIST_WINDOWS_SCRIPT))
+            .map_err(|e| fdo::Error::IOError(e.to_string()))?;
+        let failed = |e: String| fdo::Error::Failed(format!("listing windows: {e}"));
+        system::run_kwin_script(&script, LIST_WINDOWS).await.map_err(|e| failed(e.to_string()))?;
+
+        let reply = tokio::time::timeout(Duration::from_secs(2), rx).await;
+        let _ = system::unload_kwin_script(LIST_WINDOWS).await;
+        let json = reply.map_err(|_| failed("KWin didn't answer".into()))?.map_err(|e| failed(e.to_string()))?;
+        let windows: Vec<apps::Window> = serde_json::from_str(&json).map_err(|e| failed(e.to_string()))?;
+        serde_json::to_string(&apps::running_apps(&windows)).map_err(|e| failed(e.to_string()))
+    }
+
+    /// Called by the one-shot KWin script with the open windows as JSON.
+    fn report_windows(&self, json: String) {
+        if let Some(tx) = self.window_reply.lock().unwrap().take() {
+            let _ = tx.send(json);
+        }
     }
 
     /// Component states, for status displays.

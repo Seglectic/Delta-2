@@ -15,5 +15,5 @@ serde = { version = "1", features = ["derive"] }
 shell-words = "1"
 thiserror = "2"
 toml = "1"
-tokio = { version = "1", features = ["macros", "rt", "time", "signal"] }
+tokio = { version = "1", features = ["macros", "rt", "time", "signal", "sync"] }
 zbus = { version = "6", features = ["tokio"] }

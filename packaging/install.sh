@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install Delta (deltad + delta) for the current user and retire the bash version.
-# Undo with packaging/uninstall.sh.
+# Install or update Delta (deltad + delta) for the current user; on first run this
+# also retires the bash version. Undo with packaging/uninstall.sh.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,6 +37,8 @@ fi
 echo "==> Starting deltad"
 install -Dm644 "$repo/packaging/deltad.service" "$units/deltad.service"
 systemctl --user daemon-reload
-systemctl --user enable --now deltad
+systemctl --user enable deltad
+# restart, not start: re-running this script is also how updates are installed
+systemctl --user restart deltad
 sleep 2
 "$bin/delta" status
