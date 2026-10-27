@@ -182,19 +182,51 @@ fn listen_once(
     });
 }
 
-/// Hardware mice, for the device tabs.
-#[tauri::command]
-fn mice() -> Vec<delta_input::InputDevice> {
-    delta_input::list().into_iter().filter(|d| d.pointer && !d.virtual_device).collect()
+/// One physical pointing device, which may expose several input nodes.
+#[derive(Serialize)]
+struct Mouse {
+    name: String,
+    vendor_id: u16,
+    product_id: u16,
+    paths: Vec<String>,
 }
 
-/// Stream a mouse's buttons and wheel as `input` events. Motion is never read.
+/// Hardware mice for the device tabs, one per USB ID. Pointer nodes belonging to a
+/// VIA keyboard (its mouse keys) are left out: they're part of that keyboard.
+/// Some devices expose several nodes for one piece of hardware (the Steam
+/// Controller Puck has one per controller slot); they're grouped into one entry.
 #[tauri::command]
-fn watch_mouse(app: AppHandle, path: String) {
-    let label = path.clone();
-    listen_once(&app, PathBuf::from(&path), move |app, event| {
-        let _ = app.emit("input", InputEvent { path: label.clone(), event });
-    });
+fn mice() -> Vec<Mouse> {
+    let keyboards: HashSet<(u16, u16)> = discover().iter().map(|d| (d.vendor_id, d.product_id)).collect();
+    let mut out: Vec<Mouse> = Vec::new();
+    for d in delta_input::list() {
+        if !d.pointer || d.virtual_device || keyboards.contains(&(d.vendor_id, d.product_id)) {
+            continue;
+        }
+        let path = d.path.display().to_string();
+        match out.iter_mut().find(|m| (m.vendor_id, m.product_id) == (d.vendor_id, d.product_id)) {
+            Some(m) => m.paths.push(path),
+            None => out.push(Mouse {
+                name: d.name.strip_suffix(" Mouse").unwrap_or(&d.name).to_string(),
+                vendor_id: d.vendor_id,
+                product_id: d.product_id,
+                paths: vec![path],
+            }),
+        }
+    }
+    out
+}
+
+/// Stream a mouse's buttons and wheel as `input` events, from each of its nodes.
+/// Motion is never read.
+#[tauri::command]
+fn watch_mouse(app: AppHandle, paths: Vec<String>) {
+    for path in paths {
+        let label = path.clone();
+        listen_once(&app, PathBuf::from(&path), move |app, event| {
+            let _ = app.emit("input", InputEvent { path: label.clone(), event });
+        });
+    }
 }
 
 /// Light up knobs when they turn. Turns aren't switches, so VIA can't report them;

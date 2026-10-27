@@ -85,13 +85,12 @@ export interface ConfigInfo {
   problems: string[];
 }
 
-export interface InputDevice {
-  path: string;
+/** One physical mouse; `paths` are its input nodes (some devices have several). */
+export interface Mouse {
   name: string;
   vendor_id: number;
   product_id: number;
-  pointer: boolean;
-  virtual_device: boolean;
+  paths: string[];
 }
 
 export type InputEvent = { path: string } & (

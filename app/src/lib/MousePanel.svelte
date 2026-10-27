@@ -2,10 +2,10 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import type { InputDevice, InputEvent } from "./types";
+  import type { InputEvent, Mouse } from "./types";
 
   interface Props {
-    device: InputDevice;
+    device: Mouse;
   }
 
   let { device }: Props = $props();
@@ -84,9 +84,9 @@
   }
 
   onMount(() => {
-    invoke("watch_mouse", { path: device.path });
+    invoke("watch_mouse", { paths: device.paths });
     const off = listen<InputEvent>("input", (e) => {
-      if (e.payload.path === device.path) handle(e.payload);
+      if (device.paths.includes(e.payload.path)) handle(e.payload);
     });
     return () => off.then((f) => f());
   });

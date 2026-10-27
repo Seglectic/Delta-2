@@ -6,13 +6,13 @@
   import KeyPanel from "./lib/KeyPanel.svelte";
   import MousePanel from "./lib/MousePanel.svelte";
   import { keyId, modifierLabel, qmkName } from "./lib/bindings";
-  import type { ConfigInfo, InputDevice, KeyboardInfo, KnobTurn, Pressed } from "./lib/types";
+  import type { ConfigInfo, KeyboardInfo, KnobTurn, Mouse, Pressed } from "./lib/types";
 
   let keyboards = $state<KeyboardInfo[]>([]);
-  let mice = $state<InputDevice[]>([]);
+  let mice = $state<Mouse[]>([]);
   let current = $state(0);
-  /** Which device tab is open: a keyboard index, or a mouse's input path. */
-  let tab = $state<{ kind: "keyboard"; index: number } | { kind: "mouse"; path: string }>({
+  /** Which device tab is open: a keyboard index, or a mouse by USB ID. */
+  let tab = $state<{ kind: "keyboard"; index: number } | { kind: "mouse"; id: string }>({
     kind: "keyboard",
     index: 0,
   });
@@ -63,7 +63,8 @@
   });
 
   const selectedKey = $derived(definition?.keys.find((k) => keyId(k) === selected) ?? null);
-  const mouse = $derived(tab.kind === "mouse" ? mice.find((m) => m.path === (tab as { path: string }).path) : undefined);
+  const mouseId = (m: Mouse) => `${m.vendor_id}:${m.product_id}`;
+  const mouse = $derived(tab.kind === "mouse" ? mice.find((m) => mouseId(m) === (tab as { id: string }).id) : undefined);
 
   async function openKeyboard(i: number) {
     tab = { kind: "keyboard", index: i };
@@ -108,7 +109,7 @@
       [configInfo, keyboards, mice] = await Promise.all([
         invoke<ConfigInfo>("config"),
         invoke<KeyboardInfo[]>("keyboards"),
-        invoke<InputDevice[]>("mice"),
+        invoke<Mouse[]>("mice"),
       ]);
       current = Math.max(0, keyboards.findIndex((k) => k.definition && !k.error));
       if (tab.kind === "keyboard") tab = { kind: "keyboard", index: current };
@@ -145,7 +146,7 @@
         <h1>{mouse ? mouse.name : (definition?.name ?? "Delta")}</h1>
         {#if mouse}
           <span class="muted"
-            >{mouse.vendor_id.toString(16).padStart(4, "0")}:{mouse.product_id.toString(16).padStart(4, "0")} · {mouse.path}</span
+            >{mouse.vendor_id.toString(16).padStart(4, "0")}:{mouse.product_id.toString(16).padStart(4, "0")} · {mouse.paths.join(", ")}</span
           >
         {:else if keyboard}
           <span class="muted"
@@ -173,8 +174,8 @@
           ⌨ {k.definition?.name ?? k.device_name}
         </button>
       {/each}
-      {#each mice as m (m.path)}
-        <button class:on={mouse?.path === m.path} onclick={() => (tab = { kind: "mouse", path: m.path })}>
+      {#each mice as m (mouseId(m))}
+        <button class:on={mouse === m} onclick={() => (tab = { kind: "mouse", id: mouseId(m) })}>
           🖱 {m.name}
         </button>
       {/each}
@@ -182,7 +183,7 @@
   {/if}
 
   {#if mouse}
-    {#key mouse.path}
+    {#key mouseId(mouse)}
       <MousePanel device={mouse} />
     {/key}
   {:else if definition && keyboard}
