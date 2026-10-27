@@ -214,10 +214,15 @@ fn short_name(id: &str) -> String {
 /// markers; `%%` is a literal percent sign.
 pub fn strip_field_codes(exec: &str) -> String {
     exec.split_whitespace()
-        .filter(|w| !(w.len() == 2 && w.starts_with('%') && w != &"%%") && !w.starts_with("@@"))
+        .filter(|w| !is_field_code(w) && !w.starts_with("@@"))
         .map(|w| w.replace("%%", "%"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `%u`, `%F` and friends (but not `%%`).
+fn is_field_code(word: &str) -> bool {
+    word.len() == 2 && word.starts_with('%') && word != "%%"
 }
 
 /// The Flatpak app ID a process runs in, from its cgroup
