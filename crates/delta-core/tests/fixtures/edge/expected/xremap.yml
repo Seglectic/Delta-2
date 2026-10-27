@@ -1,0 +1,26 @@
+virtual_modifiers:
+  - CapsLock
+
+keymap:
+  - name: delta-layer
+    remap:
+      CapsLock-a: C-A-Super-a
+      CapsLock-right: C-A-Super-right
+      CapsLock-up: C-A-Super-up
+      CapsLock-q: C-A-Super-q
+      CapsLock-x: C-A-Super-x
+      CapsLock-s: C-A-Super-s
+
+  - name: discord-appkeys
+    application:
+      only: ["discord"]
+    remap:
+      F16: Alt-Up
+      F17: Alt-Down
+      F18: Ctrl-K
+
+  - name: firefox-appkeys
+    application:
+      only: ["firefox"]
+    remap:
+      F13: Ctrl-Shift-T

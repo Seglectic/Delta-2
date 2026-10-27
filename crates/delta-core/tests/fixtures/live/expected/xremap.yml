@@ -1,0 +1,24 @@
+virtual_modifiers:
+  - F20
+
+keymap:
+  - name: delta-layer
+    remap:
+      F20-a: C-A-Super-a
+      F20-d: C-A-Super-d
+      F20-q: C-A-Super-q
+      F20-e: C-A-Super-e
+      F20-left: C-A-Super-left
+      F20-right: C-A-Super-right
+      F20-r: C-A-Super-r
+      F20-v: C-A-Super-v
+      F20-x: C-A-Super-x
+      F20-w: C-A-Super-w
+      F20-s: C-A-Super-s
+
+  - name: discord-appkeys
+    application:
+      only: ["discord"]
+    remap:
+      F16: Alt-Up
+      F17: Alt-Down

@@ -1,0 +1,16 @@
+[package]
+name = "delta-cli"
+description = "The `delta` command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "delta"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+delta-core = { path = "../delta-core" }
+zbus.workspace = true

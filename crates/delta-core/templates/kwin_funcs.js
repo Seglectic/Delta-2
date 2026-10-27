@@ -1,0 +1,374 @@
+
+function tile(action, defaultX, defaultW) {
+    var w = workspace.activeWindow;
+    if (!w) return;
+    if (shouldIgnoreWindow(w)) return;
+    var xf = defaultX, wf = defaultW;
+    var ov = windowOverrides[w.resourceClass];
+    if (ov && ov[action]) { xf = ov[action][0]; wf = ov[action][1]; }
+    w.setMaximize(false, false);
+    var area = workspace.clientArea(KWin.MaximizeArea, w);
+    w.frameGeometry = {
+        x: area.x + Math.round(area.width * xf), y: area.y,
+        width: Math.round(area.width * wf),       height: area.height
+    };
+}
+
+function tileFixed(fw, fh) {
+    var w = workspace.activeWindow;
+    if (!w) return;
+    if (shouldIgnoreWindow(w)) return;
+    w.setMaximize(false, false);
+    var area = workspace.clientArea(KWin.MaximizeArea, w);
+    w.frameGeometry = {
+        x: area.x + Math.round((area.width  - fw) / 2),
+        y: area.y + Math.round((area.height - fh) / 2),
+        width: fw, height: fh
+    };
+}
+
+function logDelta(message) {
+    if (deltaDebug) {
+        print("DELTA: " + message);
+    }
+}
+
+var tileInsets = {
+    left: 2,
+    top: 4,
+    right: 4,
+    bottom: 4
+};
+
+function normalizedString(value) {
+    if (!value) return "";
+    return ("" + value).toLowerCase();
+}
+
+function arrayContainsNormalized(list, value) {
+    var i;
+    var needle = normalizedString(value);
+    if (!needle) return false;
+    for (i = 0; i < list.length; ++i) {
+        if (normalizedString(list[i]) === needle) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function shouldIgnoreWindow(w) {
+    if (!w) return true;
+    if (w.desktopWindow || w.windowType === 1) return true;
+    if (ignoreFullscreen && w.fullScreen) {
+        return true;
+    }
+    if (arrayContainsNormalized(ignoredDesktopFiles, w.desktopFileName || w.desktopFile)) {
+        return true;
+    }
+    if (arrayContainsNormalized(ignoredClasses, w.resourceClass)) {
+        return true;
+    }
+    return false;
+}
+
+function approx(a, b) {
+    return Math.abs(a - b) < 0.01;
+}
+
+function clearTiles(rootTile) {
+    while (rootTile.tiles.length > 0) {
+        rootTile.tiles[0].remove();
+    }
+}
+
+function splitHorizontal(rootTile) {
+    var candidates = [];
+    var i;
+    var value;
+    var label;
+
+    if (typeof KWin !== "undefined" && typeof KWin.Horizontal !== "undefined") {
+        candidates.push(["KWin.Horizontal", KWin.Horizontal]);
+    }
+    if (typeof Tile !== "undefined" && typeof Tile.Horizontal !== "undefined") {
+        candidates.push(["Tile.Horizontal", Tile.Horizontal]);
+    }
+    candidates.push(["numeric 0", 0]);
+    candidates.push(["numeric 1", 1]);
+    candidates.push(["numeric 2", 2]);
+
+    for (i = 0; i < candidates.length; ++i) {
+        label = candidates[i][0];
+        value = candidates[i][1];
+        clearTiles(rootTile);
+        rootTile.split(value);
+        logDelta("splitHorizontal: tried " + label + ", tiles=" + rootTile.tiles.length);
+        if (rootTile.tiles.length === 2) {
+            return true;
+        }
+    }
+
+    logDelta("splitHorizontal: no candidate produced 2 tiles");
+    return false;
+}
+
+function layoutLeftWidth(layoutName) {
+    if (layoutName === "halves") {
+        return 0.5;
+    }
+    if (layoutName === "thirds_left") {
+        return 1 / 3;
+    }
+    if (layoutName === "thirds_right") {
+        return 2 / 3;
+    }
+    return -1;
+}
+
+function ensureTwoColumnLayout(rootTile, layoutName) {
+    var leftWidth = layoutLeftWidth(layoutName);
+    if (leftWidth < 0) {
+        logDelta("ensureTwoColumnLayout: unknown layout " + layoutName);
+        return false;
+    }
+
+    if (rootTile.tiles.length === 2 &&
+        approx(rootTile.tiles[0].relativeGeometry.x, 0) &&
+        approx(rootTile.tiles[0].relativeGeometry.width, leftWidth) &&
+        approx(rootTile.tiles[1].relativeGeometry.x, leftWidth) &&
+        approx(rootTile.tiles[1].relativeGeometry.width, 1 - leftWidth)) {
+        return true;
+    }
+
+    clearTiles(rootTile);
+    if (!splitHorizontal(rootTile)) {
+        return false;
+    }
+    logDelta("ensureTwoColumnLayout(" + layoutName + "): after split tiles=" + rootTile.tiles.length);
+    if (!rootTile.tiles[0] || !rootTile.tiles[1]) {
+        logDelta("ensureTwoColumnLayout(" + layoutName + "): missing tiles after split");
+        return false;
+    }
+    rootTile.tiles[0].relativeGeometry = {
+        x: 0,
+        y: 0,
+        width: leftWidth,
+        height: 1
+    };
+    rootTile.tiles[1].relativeGeometry = {
+        x: leftWidth,
+        y: 0,
+        width: 1 - leftWidth,
+        height: 1
+    };
+    logDelta(
+        "ensureTwoColumnLayout(" + layoutName + "): left=(" +
+        rootTile.tiles[0].relativeGeometry.x + "," + rootTile.tiles[0].relativeGeometry.width +
+        ") right=(" +
+        rootTile.tiles[1].relativeGeometry.x + "," + rootTile.tiles[1].relativeGeometry.width + ")"
+    );
+    return rootTile.tiles.length === 2;
+}
+
+function manageIntoTile(tile, window) {
+    var geom = null;
+    var area = null;
+    if (!tile || !window) return;
+    if (typeof tile.manage === "function") {
+        tile.manage(window);
+    } else {
+        window.tile = tile;
+    }
+    if (typeof workspace.scheduleRearrange === "function") {
+        workspace.scheduleRearrange();
+    } else if (typeof workspace.rearrange === "function") {
+        workspace.rearrange();
+    }
+    area = workspace.clientArea(KWin.MaximizeArea, window);
+    if (area && tile.relativeGeometry) {
+        geom = {
+            x: Math.round(area.x + area.width * tile.relativeGeometry.x) + tileInsets.left,
+            y: Math.round(area.y + area.height * tile.relativeGeometry.y) + tileInsets.top,
+            width: Math.round(area.width * tile.relativeGeometry.width) - tileInsets.left - tileInsets.right,
+            height: Math.round(area.height * tile.relativeGeometry.height) - tileInsets.top - tileInsets.bottom
+        };
+        window.frameGeometry = {
+            x: geom.x,
+            y: geom.y,
+            width: geom.width,
+            height: geom.height
+        };
+    } else if (tile.absoluteGeometryInScreen) {
+        geom = tile.absoluteGeometryInScreen;
+        window.frameGeometry = {
+            x: geom.x,
+            y: geom.y,
+            width: geom.width,
+            height: geom.height
+        };
+    }
+}
+
+function tileIntoLayout(layoutName, side, targetWindow) {
+    var w = targetWindow || workspace.activeWindow;
+    var manager;
+    var rootTile;
+    var slotIndex;
+
+    if (!w || !w.output) return;
+    if (shouldIgnoreWindow(w)) return;
+
+    manager = workspace.tilingForScreen(w.output.name);
+    if (!manager || !manager.rootTile) return;
+    rootTile = manager.rootTile;
+
+    if (!ensureTwoColumnLayout(rootTile, layoutName)) return;
+
+    slotIndex = side === "right" ? 1 : 0;
+
+    w.setMaximize(false, false);
+    manageIntoTile(rootTile.tiles[slotIndex], w);
+}
+
+var pendingAppActions = {};
+
+function windowMatchesProfile(w, profile) {
+    var desktopFile = normalizedString(w.desktopFileName || w.desktopFile);
+    var resourceClass = normalizedString(w.resourceClass);
+    var caption = normalizedString(w.caption);
+
+    if (profile === "discord") {
+        return desktopFile.indexOf("com.discordapp.discord") >= 0 ||
+               resourceClass.indexOf("discord") >= 0 ||
+               caption.indexOf("discord") >= 0;
+    }
+    if (profile === "obsidian") {
+        return desktopFile.indexOf("md.obsidian.obsidian") >= 0 ||
+               resourceClass.indexOf("obsidian") >= 0 ||
+               caption.indexOf("obsidian") >= 0;
+    }
+    if (profile === "code") {
+        return desktopFile === "code" ||
+               desktopFile.indexOf("code.desktop") >= 0 ||
+               resourceClass === "code" ||
+               resourceClass === "vscode" ||
+               caption.indexOf("visual studio code") >= 0;
+    }
+    if (profile === "konsole") {
+        return desktopFile.indexOf("org.kde.konsole") >= 0 ||
+               resourceClass.indexOf("konsole") >= 0 ||
+               caption.indexOf("konsole") >= 0;
+    }
+    return false;
+}
+
+function focusWindow(w) {
+    if (!w) return;
+    if (w.minimized) {
+        w.minimized = false;
+    }
+    workspace.raiseWindow(w);
+    workspace.activeWindow = w;
+    workspace.activateWindow(w, true);
+    if (typeof workspace.requestFocus === "function") {
+        workspace.requestFocus(w, true);
+    }
+    if (typeof w.takeFocus === "function") {
+        w.takeFocus();
+    }
+    setTimeout(function() {
+        workspace.raiseWindow(w);
+        workspace.activeWindow = w;
+        workspace.activateWindow(w, true);
+        if (typeof workspace.requestFocus === "function") {
+            workspace.requestFocus(w, true);
+        }
+        if (typeof w.takeFocus === "function") {
+            w.takeFocus();
+        }
+    }, 50);
+}
+
+function toggleMinimizeIfActive(w) {
+    if (!w) return false;
+    if (workspace.activeWindow === w || w.active) {
+        if (w.minimizable) {
+            w.minimized = true;
+        }
+        return true;
+    }
+    return false;
+}
+
+function applyAppAction(profile, w) {
+    logDelta("applyAppAction(" + profile + "): focusing window " + normalizedString(w.caption));
+    if (profile === "discord") {
+        logDelta("applyAppAction(discord): tiling to left third");
+        tileIntoLayout("thirds_left", "left", w);
+    }
+    focusWindow(w);
+}
+
+function findWindowForProfile(profile) {
+    var windows = workspace.stackingOrder;
+    var i;
+    var minimizedMatch = null;
+    for (i = windows.length - 1; i >= 0; --i) {
+        if (windows[i] && !windows[i].deleted && windowMatchesProfile(windows[i], profile)) {
+            if (!windows[i].minimized) {
+                logDelta("findWindowForProfile(" + profile + "): matched " + normalizedString(windows[i].caption));
+                return windows[i];
+            }
+            if (!minimizedMatch) {
+                minimizedMatch = windows[i];
+            }
+        }
+    }
+    if (minimizedMatch) {
+        logDelta("findWindowForProfile(" + profile + "): matched minimized " + normalizedString(minimizedMatch.caption));
+        return minimizedMatch;
+    }
+    logDelta("findWindowForProfile(" + profile + "): no match");
+    return null;
+}
+
+function launchProfile(profile) {
+    logDelta("launchProfile(" + profile + ")");
+    pendingAppActions[profile] = true;
+    callDBus(
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "StartUnit",
+        "delta-launch@" + profile + ".service",
+        "replace"
+    );
+}
+
+function focusOrLaunch(profile) {
+    logDelta("focusOrLaunch(" + profile + ")");
+    var existing = findWindowForProfile(profile);
+    if (existing) {
+        if (toggleMinimizeIfActive(existing)) {
+            logDelta("focusOrLaunch(" + profile + "): minimized active window");
+            return;
+        }
+        applyAppAction(profile, existing);
+        return;
+    }
+    launchProfile(profile);
+}
+
+workspace.windowAdded.connect(function(window) {
+    var profile;
+    for (profile in pendingAppActions) {
+        if (pendingAppActions[profile] && windowMatchesProfile(window, profile)) {
+            logDelta("windowAdded: matched pending profile " + profile);
+            pendingAppActions[profile] = false;
+            applyAppAction(profile, window);
+            return;
+        }
+    }
+});
+

@@ -1,0 +1,6 @@
+[Unit]
+Description=Delta app launcher for %i
+
+[Service]
+Type=oneshot
+ExecStart=/home/segger/.local/bin/delta/delta-launcher %i
