@@ -115,6 +115,22 @@ pub fn kwin_script(config: &Config) -> String {
     writeln!(out, "var ignoredDesktopFiles = [{}];", js_list(&g.ignored_desktop_files)).unwrap();
     writeln!(out, "var ignoredClasses = [{}];", js_list(&g.ignored_classes)).unwrap();
 
+    // App profiles for focus-or-launch: how to recognise each app's windows
+    out.push_str("var appProfiles = {};\n");
+    for app in &config.apps {
+        let focus_tile = match &app.focus_tile {
+            Some(t) => format!("[\"{}\", \"{}\"]", t.layout.as_str(), t.side.as_str()),
+            None => "null".into(),
+        };
+        writeln!(
+            out,
+            "appProfiles[\"{}\"] = {{ match: [{}], focusTile: {focus_tile} }};",
+            app.name,
+            js_list(&app.match_strings())
+        )
+        .unwrap();
+    }
+
     out.push_str(KWIN_FUNCS);
 
     for b in config.bindings.iter().filter(|b| b.only_in.is_none()) {

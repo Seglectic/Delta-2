@@ -92,6 +92,28 @@ pub struct App {
     pub name: String,
     /// Command line used when no window is open. Split like a shell would.
     pub launch: String,
+    /// A window is this app's when its desktop file or window class contains one of
+    /// these (case-insensitive). Defaults to the app's name.
+    #[serde(default, rename = "match", skip_serializing_if = "Vec::is_empty")]
+    pub match_: Vec<String>,
+    /// Tile the window here whenever it's focused or launched through Delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_tile: Option<TileTarget>,
+}
+
+impl App {
+    /// Lower-cased match strings, falling back to the app name.
+    pub fn match_strings(&self) -> Vec<String> {
+        let list = if self.match_.is_empty() { std::slice::from_ref(&self.name) } else { &self.match_[..] };
+        list.iter().map(|m| m.to_lowercase()).collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TileTarget {
+    pub layout: TileLayout,
+    pub side: Side,
 }
 
 // No deny_unknown_fields here: serde doesn't support it together with `flatten`.
@@ -276,6 +298,9 @@ impl Config {
             }
             if !app_names.insert(app.name.as_str()) {
                 problems.push(format!("app {:?} is defined twice", app.name));
+            }
+            if app.match_.iter().any(|m| !is_app_name(m)) {
+                problems.push(format!("app {:?}: match entries may only use letters, digits, '.', '_', '-'", app.name));
             }
             if shell_words::split(&app.launch).map_or(true, |argv| argv.is_empty()) {
                 problems.push(format!("app {:?}: launch command {:?} is empty or badly quoted", app.name, app.launch));

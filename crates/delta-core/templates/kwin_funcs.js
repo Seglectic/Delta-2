@@ -233,32 +233,19 @@ function tileIntoLayout(layoutName, side, targetWindow) {
 
 var pendingAppActions = {};
 
+// A window belongs to an app when its desktop file or window class contains one of
+// the app's match strings. Window titles aren't checked: a browser tab titled
+// "Discord" must not count as Discord.
 function windowMatchesProfile(w, profile) {
+    var app = appProfiles[profile];
     var desktopFile = normalizedString(w.desktopFileName || w.desktopFile);
     var resourceClass = normalizedString(w.resourceClass);
-    var caption = normalizedString(w.caption);
-
-    if (profile === "discord") {
-        return desktopFile.indexOf("com.discordapp.discord") >= 0 ||
-               resourceClass.indexOf("discord") >= 0 ||
-               caption.indexOf("discord") >= 0;
-    }
-    if (profile === "obsidian") {
-        return desktopFile.indexOf("md.obsidian.obsidian") >= 0 ||
-               resourceClass.indexOf("obsidian") >= 0 ||
-               caption.indexOf("obsidian") >= 0;
-    }
-    if (profile === "code") {
-        return desktopFile === "code" ||
-               desktopFile.indexOf("code.desktop") >= 0 ||
-               resourceClass === "code" ||
-               resourceClass === "vscode" ||
-               caption.indexOf("visual studio code") >= 0;
-    }
-    if (profile === "konsole") {
-        return desktopFile.indexOf("org.kde.konsole") >= 0 ||
-               resourceClass.indexOf("konsole") >= 0 ||
-               caption.indexOf("konsole") >= 0;
+    var i;
+    if (!app) return false;
+    for (i = 0; i < app.match.length; ++i) {
+        if (desktopFile.indexOf(app.match[i]) >= 0 || resourceClass.indexOf(app.match[i]) >= 0) {
+            return true;
+        }
     }
     return false;
 }
@@ -302,10 +289,11 @@ function toggleMinimizeIfActive(w) {
 }
 
 function applyAppAction(profile, w) {
+    var app = appProfiles[profile];
     logDelta("applyAppAction(" + profile + "): focusing window " + normalizedString(w.caption));
-    if (profile === "discord") {
-        logDelta("applyAppAction(discord): tiling to left third");
-        tileIntoLayout("thirds_left", "left", w);
+    if (app && app.focusTile) {
+        logDelta("applyAppAction(" + profile + "): tiling to " + app.focusTile.join(" "));
+        tileIntoLayout(app.focusTile[0], app.focusTile[1], w);
     }
     focusWindow(w);
 }

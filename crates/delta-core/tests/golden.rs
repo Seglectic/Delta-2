@@ -1,8 +1,9 @@
 //! Import each fixture's legacy `delta.conf` and check the Rust generators produce
-//! what the legacy bash `delta` produced (recorded with `tools/legacy-render.sh`).
+//! what the legacy bash `delta` produced (recorded with `tools/legacy-render.sh`),
+//! apart from the intentional changes listed in `fixtures/CHANGES.md`.
 //!
-//! - `live`: today's real config; output must match byte for byte.
-//! - `edge`: every legacy feature; expected output has two intentional fixes (see FIXES.md).
+//! - `live`: today's real config.
+//! - `edge`: every legacy feature.
 
 use delta_core::{Config, generate, import};
 use std::path::{Path, PathBuf};
@@ -119,4 +120,26 @@ fn validation_reports_every_problem() {
     .unwrap();
     let problems = config.validate().unwrap_err().0;
     assert_eq!(problems.len(), 4, "{problems:#?}");
+}
+
+#[test]
+fn generated_kwin_script_is_valid_javascript() {
+    let Ok(node) = which_node() else {
+        eprintln!("node not installed; skipping");
+        return;
+    };
+    for name in ["live", "edge"] {
+        let dir = std::env::temp_dir().join(format!("delta-golden-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("main.js");
+        std::fs::write(&file, generate::kwin_script(&imported(name))).unwrap();
+        let status = std::process::Command::new(&node).arg("--check").arg(&file).status().unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(status.success(), "{name}: generated KWin script doesn't parse");
+    }
+}
+
+fn which_node() -> Result<PathBuf, ()> {
+    let path = std::env::var_os("PATH").ok_or(())?;
+    std::env::split_paths(&path).map(|d| d.join("node")).find(|p| p.is_file()).ok_or(())
 }

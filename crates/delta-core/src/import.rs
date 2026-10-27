@@ -6,7 +6,7 @@
 //! dot (so `org.kde.konsole.Q` keeps its full class), and per-app keys are later
 //! grouped by app.
 
-use crate::config::{Action, App, Backend, Binding, Config, Engine, Layer, Override, Side, TileLayout};
+use crate::config::{Action, App, Backend, Binding, Config, Engine, Layer, Override, Side, TileLayout, TileTarget};
 
 /// Parse result plus anything that was skipped, for the user to review.
 pub struct Imported {
@@ -72,7 +72,7 @@ pub fn import_conf(text: &str) -> Imported {
         if name.is_empty() {
             continue;
         }
-        config.apps.push(App { name: name.into(), launch: cmd.trim().into() });
+        config.apps.push(legacy_app(name, cmd.trim()));
     }
 
     // [bindings]
@@ -168,6 +168,22 @@ pub fn import_conf(text: &str) -> Imported {
     }
 
     Imported { config, warnings }
+}
+
+/// The legacy KWin script hard-coded how to recognise these apps' windows, and
+/// tiled Discord into the left third whenever it was focused.
+fn legacy_app(name: &str, launch: &str) -> App {
+    let (match_, focus_tile): (&[&str], _) = match name {
+        "discord" => (
+            &["com.discordapp.discord", "discord"],
+            Some(TileTarget { layout: TileLayout::ThirdsLeft, side: Side::Left }),
+        ),
+        "obsidian" => (&["md.obsidian.obsidian", "obsidian"], None),
+        "konsole" => (&["org.kde.konsole", "konsole"], None),
+        "code" => (&["code", "vscode"], None),
+        _ => (&[], None),
+    };
+    App { name: name.into(), launch: launch.into(), match_: match_.iter().map(|m| m.to_string()).collect(), focus_tile }
 }
 
 fn parse_binding(id: &str, f: &[&str]) -> Result<Binding, String> {
