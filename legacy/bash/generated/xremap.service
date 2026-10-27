@@ -1,0 +1,9 @@
+[Unit]
+Description=xremap key remapper (delta modifier)
+
+[Service]
+ExecStart=/usr/bin/xremap --watch=device --ignore "Logitech G502" /home/segger/.config/xremap/config.yml
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

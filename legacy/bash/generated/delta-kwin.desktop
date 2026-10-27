@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Delta 2 KWin Script
+Exec=bash -c 'sleep 2 && /home/segger/.local/bin/delta/delta reload-kwin'
+X-KDE-autostart-phase=2
+NoDisplay=true

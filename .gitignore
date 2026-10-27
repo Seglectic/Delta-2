@@ -1,2 +1,7 @@
+.DS_Store
 .codex
 SKILL.md
+target/
+node_modules/
+dist/
+plan/
