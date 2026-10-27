@@ -109,6 +109,7 @@ pub fn import_conf(text: &str) -> Imported {
         config.bindings.push(Binding {
             id: format!("{id}_{key}"),
             label: Some(format!("Delta: {id} ({key})")),
+            color: None,
             key,
             layer: Layer::Base,
             only_in: None,
@@ -133,6 +134,7 @@ pub fn import_conf(text: &str) -> Imported {
             layer: Layer::Base,
             only_in: Some(app.into()),
             label: None,
+            color: None,
             action: Action::Keys { send: target },
         });
     }
@@ -183,7 +185,13 @@ fn legacy_app(name: &str, launch: &str) -> App {
         "code" => (&["code", "vscode"], None),
         _ => (&[], None),
     };
-    App { name: name.into(), launch: launch.into(), match_: match_.iter().map(|m| m.to_string()).collect(), focus_tile }
+    App {
+        name: name.into(),
+        launch: launch.into(),
+        match_: match_.iter().map(|m| m.to_string()).collect(),
+        focus_tile,
+        color: None,
+    }
 }
 
 fn parse_binding(id: &str, f: &[&str]) -> Result<Binding, String> {
@@ -217,7 +225,7 @@ fn parse_binding(id: &str, f: &[&str]) -> Result<Binding, String> {
         }
         None => return Err("missing action".into()),
     };
-    Ok(Binding { id: id.into(), key, layer: Layer::Delta, only_in: None, label: None, action })
+    Ok(Binding { id: id.into(), key, layer: Layer::Delta, only_in: None, label: None, color: None, action })
 }
 
 /// `[section]` → its non-comment, non-blank lines, in file order. Sections may repeat.

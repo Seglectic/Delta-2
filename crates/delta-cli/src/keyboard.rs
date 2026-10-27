@@ -51,6 +51,32 @@ pub fn dump(paths: &Paths, only_layer: Option<u8>) -> Result<()> {
     Ok(())
 }
 
+/// What the first keyboard's firmware can do: VIA and Keychron protocol, layers,
+/// lighting, and which LED sits under each key.
+pub fn info(paths: &Paths) -> Result<()> {
+    let devices = discover();
+    let Some(device) = devices.first() else { bail!("No keyboards with a VIA interface found.") };
+    let def = Definition::load(device.vendor_id, device.product_id, &paths.layouts, &paths.layout_cache, true)?;
+    let mut via = Via::open(device)?;
+    println!("{} ({})", def.name, device.path.display());
+    println!("VIA protocol:     {}", via.protocol_version()?);
+    let Some(leds) = via.keychron_rgb()? else {
+        println!("Keychron per-key RGB: not supported by this firmware");
+        return Ok(());
+    };
+    println!("Keychron firmware: {}", via.keychron_firmware_version()?);
+    let (base, active) = via.keychron_layers()?;
+    println!("Layers:           base {base}, active {active}");
+    let (effect, brightness) = via.lighting()?;
+    println!("Lighting:         effect {effect}, brightness {brightness}");
+    let map = via.led_map(def.rows, def.cols)?;
+    let mapped = map.iter().flatten().flatten().count();
+    println!("Per-key RGB:      {leds} LEDs, {mapped} mapped to matrix positions");
+    let row0: Vec<String> = map[0].iter().map(|l| l.map_or("-".into(), |i| i.to_string())).collect();
+    println!("  row 0 LEDs:     {}", row0.join(" "));
+    Ok(())
+}
+
 /// Save everything VIA can read about the first keyboard, so it can be restored
 /// exactly after a firmware update resets it. Raw keycodes are the source of
 /// truth; names are only there for people reading the file.

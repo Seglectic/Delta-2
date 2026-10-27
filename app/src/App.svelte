@@ -6,6 +6,7 @@
   import KeyPanel from "./lib/KeyPanel.svelte";
   import MousePanel from "./lib/MousePanel.svelte";
   import BindingEditor from "./lib/BindingEditor.svelte";
+  import LightingPanel from "./lib/LightingPanel.svelte";
   import { keyId, modifierLabel, qmkName } from "./lib/bindings";
   import type {
     App as DeltaApp,
@@ -299,6 +300,18 @@
         {/each}
       {/if}
     </section>
+
+    {#key configInfo?.source + JSON.stringify(configInfo?.config?.lighting ?? {})}
+      <LightingPanel
+        config={editableConfig()}
+        {saving}
+        onsave={async (lighting) => {
+          const config = editableConfig();
+          config.lighting = lighting;
+          if (!(await save(config))) error = editorProblems.join("; ");
+        }}
+      />
+    {/key}
 
     {#if selectedKey}
       <KeyPanel

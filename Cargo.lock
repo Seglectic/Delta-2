@@ -716,6 +716,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "delta-core",
+ "delta-via",
  "serde_json",
  "tokio",
  "zbus",

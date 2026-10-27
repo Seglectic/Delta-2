@@ -170,6 +170,28 @@ pub fn decode(code: u16, custom: &[String]) -> Keycode {
     }
 }
 
+/// The basic keycode for a key name as Delta/xremap/KDE write it: `R`, `5`, `F13`,
+/// `Left`, `grave`, `Esc`, `capslock`. None if it isn't a basic key.
+pub fn code_for_key_name(name: &str) -> Option<u16> {
+    let norm = |s: &str| s.to_uppercase().replace('_', "");
+    let wanted = norm(name);
+    let wanted = match wanted.as_str() {
+        "ESC" => "ESCAPE".to_string(),
+        "BKSP" => "BACKSPACE".into(),
+        "DEL" => "DELETE".into(),
+        "INS" => "INSERT".into(),
+        "PGUP" => "PAGEUP".into(),
+        "PGDN" => "PAGEDOWN".into(),
+        "CAPS" => "CAPSLOCK".into(),
+        "RETURN" => "ENTER".into(),
+        "APOSTROPHE" => "QUOTE".into(),
+        "LEFTBRACE" => "LEFTBRACKET".into(),
+        "RIGHTBRACE" => "RIGHTBRACKET".into(),
+        _ => wanted,
+    };
+    (0x04..=0xE7u16).find(|c| basic(*c).name.strip_prefix("KC_").is_some_and(|n| norm(n) == wanted))
+}
+
 fn basic(code: u16) -> Keycode {
     if let Some(&(_, name, label)) = BASIC.iter().find(|(c, ..)| *c == code) {
         return Keycode::new(code, format!("KC_{name}"), label);
@@ -268,6 +290,19 @@ mod tests {
         // Num Lock F19, Caps Lock F20
         let f: Vec<String> = (0x68..=0x6F).map(name).collect();
         assert_eq!(f, ["KC_F13", "KC_F14", "KC_F15", "KC_F16", "KC_F17", "KC_F18", "KC_F19", "KC_F20"]);
+    }
+
+    #[test]
+    fn key_names_to_codes() {
+        assert_eq!(code_for_key_name("R"), Some(0x15));
+        assert_eq!(code_for_key_name("f20"), Some(0x6F));
+        assert_eq!(code_for_key_name("F13"), Some(0x68));
+        assert_eq!(code_for_key_name("Left"), Some(0x50));
+        assert_eq!(code_for_key_name("grave"), Some(0x35));
+        assert_eq!(code_for_key_name("Esc"), Some(0x29));
+        assert_eq!(code_for_key_name("capslock"), Some(0x39));
+        assert_eq!(code_for_key_name("5"), Some(0x22));
+        assert_eq!(code_for_key_name("Nope"), None);
     }
 
     #[test]

@@ -64,6 +64,8 @@
   let newAppMatch = $state("");
   let send = $state<string>(b?.send ?? "");
   let run = $state<string>(b?.run ?? "");
+  let customColor = $state<boolean>(!!b?.color);
+  let color = $state<string>(b?.color ?? "#89B4FA");
   let shortcutQuery = $state<string>(
     seed.binding?.action === "kwin_shortcut"
       ? (seed.shortcuts.find((s) => s.name === (b?.name as string))?.label ?? (b?.name as string))
@@ -155,6 +157,7 @@
       key: keyName,
       ...(layer === "base" ? { layer: "base" } : {}),
       ...(scoped && onlyIn.trim() ? { only_in: onlyIn.trim() } : {}),
+      ...(customColor ? { color: color.toUpperCase() } : {}),
       ...action,
     } as Binding;
     onsave(out, createdApp);
@@ -300,7 +303,15 @@
         {/if}
       </fieldset>
 
-      {#if problems.length}
+      <fieldset>
+      <legend>Key colour</legend>
+      <label
+        ><input type="checkbox" bind:checked={customColor} /> Custom colour while Caps is held
+        {#if customColor}<input type="color" bind:value={color} />{/if}</label
+      >
+    </fieldset>
+
+    {#if problems.length}
         <ul class="problems">
           {#each problems as p}<li>{p}</li>{/each}
         </ul>

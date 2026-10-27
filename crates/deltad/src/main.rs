@@ -13,6 +13,8 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use tokio::sync::oneshot;
 use zbus::object_server::SignalEmitter;
+
+mod highlight;
 use zbus::{fdo, interface};
 
 const BUS_NAME: &str = "org.seglectic.Delta";
@@ -34,16 +36,18 @@ struct Delta {
     last_error: Option<String>,
     /// Waiting `ListRunningApps` call, answered by the KWin script's `ReportWindows`.
     window_reply: Mutex<Option<oneshot::Sender<String>>>,
+    /// The current config, for the key-highlight thread.
+    shared: highlight::Shared,
 }
 
 impl Delta {
-    fn new(paths: Paths) -> Self {
+    fn new(paths: Paths, shared: highlight::Shared) -> Self {
         let launcher = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.canonicalize().ok())
             .and_then(|exe| exe.parent().map(|dir| dir.join("delta")))
             .unwrap_or_else(|| "delta".into());
-        Self { paths, launcher, config: None, seen: None, last_error: None, window_reply: Mutex::new(None) }
+        Self { paths, launcher, config: None, seen: None, last_error: None, window_reply: Mutex::new(None), shared }
     }
 
     fn file_mtime(&self) -> Option<SystemTime> {
@@ -64,6 +68,7 @@ impl Delta {
         }
         match Config::load(&self.paths.config) {
             Ok(config) => {
+                self.shared.set(config.clone());
                 self.config = Some(config);
                 self.apply_current().await;
             }
@@ -126,6 +131,7 @@ impl Delta {
             .map_err(|e| fdo::Error::IOError(e.to_string()))?;
 
         self.seen = Some(self.file_mtime());
+        self.shared.set(config.clone());
         self.config = Some(config);
         self.apply_current().await;
         Self::config_changed(&emitter).await?;
@@ -215,9 +221,11 @@ async fn wait_for_kwin(conn: &zbus::Connection) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    let shared = highlight::Shared::default();
+    highlight::spawn(shared.clone());
     let conn = zbus::connection::Builder::session()
         .name(BUS_NAME)
-        .serve_at(OBJECT_PATH, Delta::new(Paths::from_env()))
+        .serve_at(OBJECT_PATH, Delta::new(Paths::from_env(), shared.clone()))
         .build()
         .await?;
     let iface = conn.object_server().interface::<_, Delta>(OBJECT_PATH).await?;

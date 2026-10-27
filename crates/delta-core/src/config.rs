@@ -18,6 +18,8 @@ pub struct Config {
     pub xremap: Xremap,
     #[serde(default)]
     pub guards: Guards,
+    #[serde(default)]
+    pub lighting: Lighting,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<App>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -85,6 +87,35 @@ fn yes() -> bool {
     true
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lighting {
+    /// While the delta key is held, light the keys that have a Caps-layer action, in
+    /// their colours (keyboards with Keychron per-key RGB firmware).
+    #[serde(default = "yes")]
+    pub caps_highlight: bool,
+    /// The lighting Delta sets when the keyboard connects and returns to after
+    /// highlighting. Unset: leave whatever the keyboard has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal: Option<NormalLighting>,
+}
+
+impl Default for Lighting {
+    fn default() -> Self {
+        Self { caps_highlight: true, normal: None }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormalLighting {
+    /// RGB matrix effect number: 0 off, 1 solid colour, 2 breathing.
+    pub effect: u8,
+    /// `#RRGGBB`
+    pub color: String,
+    pub brightness: u8,
+}
+
 /// An app that `app` actions can focus, or launch when it isn't open.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +130,9 @@ pub struct App {
     /// Tile the window here whenever it's focused or launched through Delta.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_tile: Option<TileTarget>,
+    /// Key colour for this app's bindings, e.g. `#5865F2`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl App {
@@ -132,6 +166,9 @@ pub struct Binding {
     /// Name shown in KDE's shortcut settings. Defaults to `Delta: <id>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Key colour while the delta key is held, e.g. `#89B4FA`. Defaults by action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(flatten)]
     pub action: Action,
 }
@@ -337,6 +374,9 @@ impl Config {
             if !app_names.insert(app.name.as_str()) {
                 problems.push(format!("app {:?} is defined twice", app.name));
             }
+            if app.color.as_deref().is_some_and(|c| parse_hex_color(c).is_none()) {
+                problems.push(format!("app {:?}: color isn't a #RRGGBB colour", app.name));
+            }
             if app.match_.iter().any(|m| !is_app_name(m)) {
                 problems.push(format!("app {:?}: match entries may only use letters, digits, '.', '_', '-'", app.name));
             }
@@ -363,6 +403,9 @@ impl Config {
                 if b.action.is_window_action() {
                     problems.push(format!("{at}: per-app bindings can only send keys for now"));
                 }
+            }
+            if b.color.as_deref().is_some_and(|c| parse_hex_color(c).is_none()) {
+                problems.push(format!("{at}: color isn't a #RRGGBB colour"));
             }
             if let Some(label) = &b.label
                 && label.contains(['"', '\\', '\n'])
@@ -410,6 +453,12 @@ impl Config {
             }
         }
 
+        if let Some(n) = &self.lighting.normal
+            && parse_hex_color(&n.color).is_none()
+        {
+            problems.push("lighting.normal.color isn't a #RRGGBB colour".into());
+        }
+
         for o in &self.overrides {
             if !is_app_name(&o.app) || !is_key_name(&o.key) {
                 problems.push(format!("override {}.{}: app/key use unsupported characters", o.app, o.key));
@@ -432,6 +481,16 @@ impl Config {
 
         if problems.is_empty() { Ok(()) } else { Err(Problems(problems)) }
     }
+}
+
+/// `#RRGGBB` → (r, g, b).
+pub fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
+    let hex = s.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some((byte(0)?, byte(2)?, byte(4)?))
 }
 
 fn is_ident(s: &str) -> bool {

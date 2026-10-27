@@ -4,7 +4,10 @@
 //! usage 0x61. sysfs tells us each hidraw node's report descriptor and USB IDs, so
 //! no HID library is needed.
 
-use crate::protocol::{KeyboardValue, MAX_BUFFER_CHUNK, REPORT_LEN, ReadCommand, UNHANDLED};
+use crate::protocol::{
+    CHANNEL_RGB_MATRIX, Hsv, KeyboardValue, LightingCommand, MAX_BUFFER_CHUNK, MAX_COLORS_PER_WRITE, REPORT_LEN,
+    ReadCommand, UNHANDLED, VALUE_BRIGHTNESS, VALUE_EFFECT, is_ram_only_write, is_read_only,
+};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -19,10 +22,16 @@ const TIMEOUT: Duration = Duration::from_millis(500);
 pub enum ViaError {
     #[error("{path}: {source}")]
     Io { path: String, source: std::io::Error },
-    #[error("{path}: no answer to {cmd:?} within {TIMEOUT:?}")]
-    Timeout { path: String, cmd: ReadCommand },
-    #[error("{path}: keyboard doesn't support {cmd:?}")]
-    Unsupported { path: String, cmd: ReadCommand },
+    #[error("{path}: no answer to {command} within {TIMEOUT:?}")]
+    Timeout { path: String, command: String },
+    #[error("{path}: keyboard doesn't support {command}")]
+    Unsupported { path: String, command: String },
+    #[error("{path}: keyboard rejected {command}")]
+    Rejected { path: String, command: String },
+    #[error("refusing to send {0}: not on the read or RAM-write allowlist")]
+    Refused(String),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +81,8 @@ fn parse_hid_id(uevent: &str) -> Option<(u16, u16)> {
 pub struct Via {
     file: File,
     path: String,
+    /// VIA protocol version, asked once (the switch-matrix format depends on it).
+    protocol: Option<u16>,
 }
 
 impl Via {
@@ -83,11 +94,30 @@ impl Via {
             .custom_flags(libc::O_NONBLOCK)
             .open(&device.path)
             .map_err(|source| ViaError::Io { path: path.clone(), source })?;
-        Ok(Self { file, path })
+        Ok(Self { file, path, protocol: None })
     }
 
     /// Send one read command and return the keyboard's 32-byte answer.
     pub fn request(&mut self, cmd: ReadCommand) -> Result<[u8; REPORT_LEN], ViaError> {
+        self.transact(cmd.encode(), cmd.echo_len(), &format!("{cmd:?}"))
+    }
+
+    /// Send one RAM-only lighting change. Keychron commands report success in byte 2.
+    pub fn send(&mut self, cmd: LightingCommand) -> Result<(), ViaError> {
+        let reply = self.transact(cmd.encode(), cmd.echo_len(), &format!("{cmd:?}"))?;
+        if reply[0] == 0xA8 && reply[2] != 0 {
+            return Err(ViaError::Rejected { path: self.path.clone(), command: format!("{cmd:?}") });
+        }
+        Ok(())
+    }
+
+    /// Write a packet and wait for the reply that echoes its first `echo` bytes. Other
+    /// programs' replies (hidraw delivers every report to every reader) are skipped.
+    fn transact(&mut self, packet: [u8; REPORT_LEN], echo: usize, label: &str) -> Result<[u8; REPORT_LEN], ViaError> {
+        // Backstop for the typed commands: only allowlisted packets ever go out
+        if !is_read_only(&packet) && !is_ram_only_write(&packet) {
+            return Err(ViaError::Refused(label.into()));
+        }
         let io = |source| ViaError::Io { path: self.path.clone(), source };
 
         // Drop anything left over from an earlier, timed-out request
@@ -96,22 +126,23 @@ impl Via {
 
         // hidraw wants the report ID first; VIA doesn't use report IDs, so it's 0
         let mut out = [0u8; REPORT_LEN + 1];
-        out[1..].copy_from_slice(&cmd.encode());
+        out[1..].copy_from_slice(&packet);
         self.file.write_all(&out).map_err(io)?;
 
         let deadline = Instant::now() + TIMEOUT;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() || !self.wait_readable(left).map_err(io)? {
-                return Err(ViaError::Timeout { path: self.path.clone(), cmd });
+                return Err(ViaError::Timeout { path: self.path.clone(), command: label.into() });
             }
             let mut reply = [0u8; REPORT_LEN];
             match self.file.read(&mut reply) {
-                Ok(n) if n > 0 && reply[0] == cmd.id() => return Ok(reply),
-                Ok(n) if n > 0 && reply[0] == UNHANDLED => {
-                    return Err(ViaError::Unsupported { path: self.path.clone(), cmd });
+                Ok(n) if n > 0 && reply[..echo] == packet[..echo] => return Ok(reply),
+                // Unhandled replies keep the rest of the request, so match on it
+                Ok(n) if n > 0 && reply[0] == UNHANDLED && reply[1..echo] == packet[1..echo] => {
+                    return Err(ViaError::Unsupported { path: self.path.clone(), command: label.into() });
                 }
-                // Some other report (e.g. a vendor status message): keep waiting
+                // Some other report (another program's reply, a vendor message): keep waiting
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(io(e)),
@@ -141,8 +172,27 @@ impl Via {
 
     /// Matrix positions `(row, col)` whose switches are held right now.
     pub fn pressed(&mut self, rows: u8, cols: u8) -> Result<Vec<(u8, u8)>, ViaError> {
-        let r = self.request(ReadCommand::KeyboardValue(KeyboardValue::SwitchMatrixState))?;
-        Ok(decode_matrix(&r[2..], rows, cols))
+        let protocol = match self.protocol {
+            Some(p) => p,
+            None => {
+                let p = self.protocol_version()?;
+                self.protocol = Some(p);
+                p
+            }
+        };
+        if protocol < 12 {
+            let r = self.request(ReadCommand::SwitchMatrix { row: 0 })?;
+            return Ok(decode_matrix(&r[2..], rows, cols));
+        }
+        // Protocol 12+: as many rows as fit in one reply, from a starting row
+        let per_reply = (28 / (cols as usize).div_ceil(8).clamp(1, 4)) as u8;
+        let mut pressed = Vec::new();
+        for start in (0..rows).step_by(per_reply.max(1) as usize) {
+            let r = self.request(ReadCommand::SwitchMatrix { row: start })?;
+            let count = per_reply.min(rows - start);
+            pressed.extend(decode_matrix(&r[3..], count, cols).into_iter().map(|(row, col)| (row + start, col)));
+        }
+        Ok(pressed)
     }
 
     /// The raw macro buffer: `count` NUL-terminated macros, in QMK's encoding.
@@ -157,6 +207,68 @@ impl Via {
             bytes.extend_from_slice(&r[4..4 + size as usize]);
         }
         Ok((count, bytes))
+    }
+
+    /// LED count when the keyboard runs Keychron firmware with per-key RGB, else None.
+    pub fn keychron_rgb(&mut self) -> Result<Option<u8>, ViaError> {
+        match self.request(ReadCommand::KeychronProtocol) {
+            Ok(_) => {}
+            Err(ViaError::Unsupported { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        }
+        let r = match self.request(ReadCommand::KeychronLedCount) {
+            Ok(r) => r,
+            Err(ViaError::Unsupported { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok((r[2] == 0 && r[3] > 0).then_some(r[3]))
+    }
+
+    /// Keychron firmware version string, e.g. `v1.1.0 2026-10-27-16:54:49`.
+    pub fn keychron_firmware_version(&mut self) -> Result<String, ViaError> {
+        let r = self.request(ReadCommand::KeychronFirmwareVersion)?;
+        let text = r[1..].split(|b| *b == 0).next().unwrap_or_default();
+        Ok(String::from_utf8_lossy(text).into_owned())
+    }
+
+    /// Keychron firmware: the base layer in use (Mac/Windows switch) and the highest
+    /// active layer right now.
+    pub fn keychron_layers(&mut self) -> Result<(u8, u8), ViaError> {
+        let r = self.request(ReadCommand::KeychronDefaultLayer)?;
+        Ok((r[1], r[2]))
+    }
+
+    /// LED index of each matrix position (`[row][col]`), None where there's no LED.
+    pub fn led_map(&mut self, rows: u8, cols: u8) -> Result<Vec<Vec<Option<u8>>>, ViaError> {
+        (0..rows)
+            .map(|row| {
+                let r = self.request(ReadCommand::KeychronLedIndex { row })?;
+                Ok((0..cols as usize).map(|c| r.get(3 + c).copied().filter(|i| *i != 0xFF)).collect())
+            })
+            .collect()
+    }
+
+    /// RGB matrix `(effect, brightness)`; effect 0 means the lights are off.
+    pub fn lighting(&mut self) -> Result<(u8, u8), ViaError> {
+        let get = |via: &mut Self, value| -> Result<u8, ViaError> {
+            Ok(via.request(ReadCommand::LightingValue { channel: CHANNEL_RGB_MATRIX, value })?[3])
+        };
+        Ok((get(self, VALUE_EFFECT)?, get(self, VALUE_BRIGHTNESS)?))
+    }
+
+    /// Replace the per-key colours (RAM only), 9 LEDs per write. `colors` must cover
+    /// exactly `led_count` LEDs: Keychron's firmware doesn't bounds-check writes.
+    pub fn set_per_key_colors(&mut self, colors: &[Hsv], led_count: u8) -> Result<(), ViaError> {
+        if colors.len() != led_count as usize {
+            return Err(ViaError::Invalid(format!("{} colours for {led_count} LEDs", colors.len())));
+        }
+        for (i, chunk) in colors.chunks(MAX_COLORS_PER_WRITE).enumerate() {
+            let mut buf = [Hsv::default(); MAX_COLORS_PER_WRITE];
+            buf[..chunk.len()].copy_from_slice(chunk);
+            let start = (i * MAX_COLORS_PER_WRITE) as u8;
+            self.send(LightingCommand::PerKeyColors { start, count: chunk.len() as u8, colors: buf })?;
+        }
+        Ok(())
     }
 
     pub fn layer_count(&mut self) -> Result<u8, ViaError> {

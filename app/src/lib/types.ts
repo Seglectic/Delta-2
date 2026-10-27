@@ -68,6 +68,8 @@ export type Binding = Action & {
   layer?: "delta" | "base";
   only_in?: string;
   label?: string;
+  /** #RRGGBB key colour while Caps is held. */
+  color?: string;
 };
 
 export interface App {
@@ -99,6 +101,10 @@ export interface Config {
   engine: { backend: string; modifier_key: string };
   apps?: App[];
   bindings?: Binding[];
+  lighting?: {
+    caps_highlight?: boolean;
+    normal?: { effect: number; color: string; brightness: number };
+  };
   // Other sections are passed through untouched
   [section: string]: unknown;
 }
