@@ -46,7 +46,7 @@ fn check(name: &str) {
     let config = imported(name);
     let expected = fixture(name).join("expected");
 
-    assert_same(&generate::xremap_config(&config), &read(expected.join("xremap.yml")), "xremap.yml");
+    assert_same(&generate::xremap_config(&config, "delta"), &read(expected.join("xremap.yml")), "xremap.yml");
     assert_same(
         without_header(&generate::kwin_script(&config)),
         without_header(&read(expected.join("main.js"))),
@@ -142,4 +142,54 @@ fn generated_kwin_script_is_valid_javascript() {
 fn which_node() -> Result<PathBuf, ()> {
     let path = std::env::var_os("PATH").ok_or(())?;
     std::env::split_paths(&path).map(|d| d.join("node")).find(|p| p.is_file()).ok_or(())
+}
+
+#[test]
+fn command_and_shortcut_actions_go_through_xremap() {
+    let config = Config::from_toml(
+        r#"
+        [engine]
+        modifier_key = "f20"
+
+        [[bindings]]
+        id = "Notes"
+        key = "N"
+        action = "command"
+        run = "kate \"$HOME/notes.md\""
+
+        [[bindings]]
+        id = "Overview"
+        key = "F13"
+        layer = "base"
+        action = "kwin_shortcut"
+        name = "Overview"
+
+        [[bindings]]
+        id = "Close"
+        key = "F14"
+        layer = "base"
+        only_in = "firefox"
+        action = "kwin_shortcut"
+        name = "Window Close"
+        "#,
+    )
+    .unwrap();
+    config.validate().unwrap();
+    let yaml = generate::xremap_config(&config, "/usr/bin/delta");
+    assert!(
+        yaml.contains(
+            r#"F20-n: {launch: ["systemd-run", "--user", "--scope", "--quiet", "sh", "-c", "kate \"$HOME/notes.md\""]}"#
+        ),
+        "{yaml}"
+    );
+    assert!(
+        yaml.contains(r#"F13: {launch: ["/usr/bin/delta", "shortcut", "--component", "kwin", "Overview"]}"#),
+        "{yaml}"
+    );
+    assert!(
+        yaml.contains(r#"F14: {launch: ["/usr/bin/delta", "shortcut", "--component", "kwin", "Window Close"]}"#),
+        "{yaml}"
+    );
+    // None of them register a KDE shortcut of their own
+    assert!(!generate::kwin_script(&config).contains("registerShortcut(\"Notes\""));
 }

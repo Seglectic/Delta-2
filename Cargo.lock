@@ -665,6 +665,7 @@ dependencies = [
  "serde",
  "tauri",
  "tauri-build",
+ "zbus",
 ]
 
 [[package]]

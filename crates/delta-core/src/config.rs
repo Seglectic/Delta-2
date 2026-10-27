@@ -142,7 +142,7 @@ impl Binding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layer {
     /// While the delta modifier (Caps Lock) is held.
@@ -177,12 +177,29 @@ pub enum Action {
     App { app: String },
     /// Send a key chord instead, e.g. `Alt+Up`, `Ctrl+Shift+T`, `PlayPause`.
     Keys { send: String },
+    /// Run a shell command (`sh -c`), in its own systemd scope.
+    Command { run: String },
+    /// Fire a KDE global shortcut by its internal name, e.g. `Overview`, `Window Close`.
+    KwinShortcut {
+        name: String,
+        /// The kglobalaccel component that owns it.
+        #[serde(default = "default_component", skip_serializing_if = "is_default_component")]
+        component: String,
+    },
+}
+
+fn default_component() -> String {
+    "kwin".into()
+}
+
+fn is_default_component(c: &String) -> bool {
+    c == "kwin"
 }
 
 impl Action {
-    /// Window actions run inside the KWin script; the rest are pure key remaps.
+    /// Window actions run inside the KWin script; the rest are handled by xremap.
     pub fn is_window_action(&self) -> bool {
-        !matches!(self, Action::Keys { .. })
+        matches!(self, Action::Tile { .. } | Action::Span { .. } | Action::Fixed { .. } | Action::App { .. })
     }
 }
 
@@ -235,8 +252,16 @@ pub struct Override {
     pub width: f64,
 }
 
+const SAVED_HEADER: &str = "\
+# Delta config. Edit it here or in the Delta app; deltad applies changes on save.
+# Comments aren't kept when the app saves this file.
+
+";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("writing {path}: {source}")]
+    Write { path: String, source: std::io::Error },
     #[error("reading {path}: {source}")]
     Read { path: String, source: std::io::Error },
     #[error("parsing {path}: {source}")]
@@ -274,6 +299,19 @@ impl Config {
 
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).expect("config always serializes")
+    }
+
+    /// Validate, then write to `path` via a temp file so a half-written config is
+    /// never picked up. Comments in the old file aren't kept.
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        self.validate().map_err(ConfigError::Invalid)?;
+        let err = |source| ConfigError::Write { path: path.display().to_string(), source };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(err)?;
+        }
+        let text = format!("{SAVED_HEADER}{}", self.to_toml());
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)).map_err(err)
     }
 
     pub fn app(&self, name: &str) -> Option<&App> {
@@ -338,6 +376,17 @@ impl Config {
                 Action::Keys { send } if !is_chord(send) => {
                     problems.push(format!("{at}: {send:?} is not a key chord like Alt+Up"));
                 }
+                Action::Command { run } if run.trim().is_empty() => {
+                    problems.push(format!("{at}: the command is empty"));
+                }
+                Action::KwinShortcut { name, component } => {
+                    if name.trim().is_empty() || name.chars().any(char::is_control) {
+                        problems.push(format!("{at}: shortcut name {name:?} is empty or has control characters"));
+                    }
+                    if !is_app_name(component) {
+                        problems.push(format!("{at}: shortcut component {component:?} is not a valid name"));
+                    }
+                }
                 Action::Span { x, width, name } => {
                     if !(0.0..=1.0).contains(x) || !(0.0..=1.0).contains(width) {
                         problems.push(format!("{at}: x and width are screen fractions between 0 and 1"));
@@ -347,6 +396,17 @@ impl Config {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // One action per trigger: the same key, layer and app can't do two things
+        let mut triggers = HashSet::new();
+        for b in &self.bindings {
+            let trigger = (b.key.to_lowercase(), b.layer, b.only_in.as_deref());
+            if !triggers.insert(trigger) {
+                let when = b.only_in.as_deref().map(|a| format!(" in {a}")).unwrap_or_default();
+                problems
+                    .push(format!("binding {:?}: {:?} on the {:?} layer{when} is already bound", b.id, b.key, b.layer));
             }
         }
 

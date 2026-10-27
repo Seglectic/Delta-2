@@ -36,7 +36,10 @@ pub fn render(config: &Config, paths: &Paths, launcher_exec: &Path) -> Vec<Artif
     let xremap_bin = find_in_path("xremap").unwrap_or_else(|| home().join(".local/bin/xremap"));
     let launch = format!("{} launch", launcher_exec.display());
     vec![
-        Artifact { path: paths.xremap_config.clone(), contents: generate::xremap_config(config) },
+        Artifact {
+            path: paths.xremap_config.clone(),
+            contents: generate::xremap_config(config, &launcher_exec.display().to_string()),
+        },
         Artifact {
             path: paths.xremap_service.clone(),
             contents: generate::xremap_service(
@@ -125,19 +128,64 @@ where
     conn.call_method(Some("org.kde.KWin"), "/Scripting", Some("org.kde.kwin.Scripting"), method, body).await
 }
 
-/// Fire a Delta action by its binding ID, exactly as if its hotkey were pressed.
-/// The KWin script registers each window action under KWin's shortcut component.
-pub async fn invoke_shortcut(id: &str) -> Result<(), SystemError> {
+/// Fire a KDE global shortcut by name, exactly as if its keys were pressed. Delta's
+/// window actions are registered under the `kwin` component by their binding ID.
+pub async fn invoke_shortcut(component: &str, name: &str) -> Result<(), SystemError> {
     let conn = zbus::Connection::session().await?;
     conn.call_method(
         Some("org.kde.kglobalaccel"),
-        "/component/kwin",
+        format!("/component/{component}").as_str(),
         Some("org.kde.kglobalaccel.Component"),
         "invokeShortcut",
-        &(id,),
+        &(name,),
     )
     .await?;
     Ok(())
+}
+
+/// A KDE global shortcut, for pickers.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Shortcut {
+    /// kglobalaccel component, e.g. `kwin`, `plasmashell`.
+    pub component: String,
+    /// The component's display name, e.g. `KWin`.
+    pub component_name: String,
+    /// Internal name, what `kwin_shortcut` actions use.
+    pub name: String,
+    /// Display name, e.g. `Quick Tile Window to the Top Right`.
+    pub label: String,
+}
+
+/// Every KDE global shortcut, except the ones Delta registers itself.
+pub async fn list_shortcuts() -> Result<Vec<Shortcut>, SystemError> {
+    type Info = (String, String, String, String, String, String, Vec<i32>, Vec<i32>);
+    let conn = zbus::Connection::session().await?;
+    let reply = conn
+        .call_method(Some("org.kde.kglobalaccel"), "/kglobalaccel", Some("org.kde.KGlobalAccel"), "allComponents", &())
+        .await?;
+    let components: Vec<zbus::OwnedObjectPath> = reply.body().deserialize()?;
+    let mut out = Vec::new();
+    for path in components {
+        let reply = conn
+            .call_method(
+                Some("org.kde.kglobalaccel"),
+                path.as_str(),
+                Some("org.kde.kglobalaccel.Component"),
+                "allShortcutInfos",
+                &(),
+            )
+            .await?;
+        let infos: Vec<Info> = reply.body().deserialize()?;
+        for (name, label, component, component_name, ..) in infos {
+            if label.starts_with("Delta: ") {
+                continue;
+            }
+            let label = if label.is_empty() { name.clone() } else { label };
+            out.push(Shortcut { component, component_name, name, label });
+        }
+    }
+    out.sort_by(|a, b| a.component_name.cmp(&b.component_name).then(a.label.cmp(&b.label)));
+    Ok(out)
 }
 
 /// `systemctl --user is-active xremap`: "active", "inactive", "failed", …

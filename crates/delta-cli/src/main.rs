@@ -48,6 +48,13 @@ enum Cmd {
     Status,
     /// Launch an app from the config (used by delta-launch@.service)
     Launch { app: String },
+    /// Fire a KDE global shortcut by name, e.g. `delta shortcut Overview` (`list` lists them)
+    Shortcut {
+        name: String,
+        /// kglobalaccel component that owns the shortcut
+        #[arg(long, default_value = "kwin")]
+        component: String,
+    },
     /// Read connected QMK keyboards over VIA (read-only)
     #[command(subcommand)]
     Keyboard(KeyboardCmd),
@@ -95,6 +102,13 @@ fn main() -> Result<()> {
         Cmd::Status => cmd_status(&paths),
         Cmd::Keyboard(KeyboardCmd::List) => keyboard::list(&paths),
         Cmd::Keyboard(KeyboardCmd::Dump { layer }) => keyboard::dump(&paths, layer),
+        Cmd::Shortcut { name, component } if name == "list" => {
+            for s in zbus::block_on(system::list_shortcuts())? {
+                println!("{:<14} {:<40} {}", s.component, s.name, s.label);
+            }
+            Ok(())
+        }
+        Cmd::Shortcut { name, component } => Ok(zbus::block_on(system::invoke_shortcut(&component, &name))?),
         Cmd::Launch { app } => {
             let config = load(&paths)?;
             Err(launch::exec_app(&config, &app)).with_context(|| format!("launching {app}"))

@@ -5,8 +5,20 @@
   import Keyboard from "./lib/Keyboard.svelte";
   import KeyPanel from "./lib/KeyPanel.svelte";
   import MousePanel from "./lib/MousePanel.svelte";
+  import BindingEditor from "./lib/BindingEditor.svelte";
   import { keyId, modifierLabel, qmkName } from "./lib/bindings";
-  import type { ConfigInfo, KeyboardInfo, KnobTurn, Mouse, Pressed } from "./lib/types";
+  import type {
+    App as DeltaApp,
+    AppSuggestion,
+    Binding,
+    Config,
+    ConfigInfo,
+    KeyboardInfo,
+    KnobTurn,
+    Mouse,
+    Pressed,
+    Shortcut,
+  } from "./lib/types";
 
   let keyboards = $state<KeyboardInfo[]>([]);
   let mice = $state<Mouse[]>([]);
@@ -17,6 +29,15 @@
     index: 0,
   });
   let turning = $state<Record<number, "left" | "right">>({});
+
+  // Binding editor
+  let editing = $state<{ keyName: string; binding: Binding | null } | null>(null);
+  let editorProblems = $state<string[]>([]);
+  let saving = $state(false);
+  let shortcuts = $state<Shortcut[]>([]);
+  let suggestions = $state<AppSuggestion[]>([]);
+  /** deltad's status map, or null when it isn't running. */
+  let deltad = $state<Record<string, string> | null>(null);
   let configInfo = $state<ConfigInfo | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -65,6 +86,53 @@
   const selectedKey = $derived(definition?.keys.find((k) => keyId(k) === selected) ?? null);
   const mouseId = (m: Mouse) => `${m.vendor_id}:${m.product_id}`;
   const mouse = $derived(tab.kind === "mouse" ? mice.find((m) => mouseId(m) === (tab as { id: string }).id) : undefined);
+
+  const editableConfig = (): Config =>
+    structuredClone($state.snapshot(configInfo?.config)) ?? { engine: { backend: "xremap", modifier_key: "capslock" } };
+
+  async function openEditor(keyName: string, binding: Binding | null) {
+    editorProblems = [];
+    editing = { keyName, binding };
+    if (!shortcuts.length) invoke<Shortcut[]>("shortcuts").then((s) => (shortcuts = s)).catch(() => {});
+    if (!suggestions.length) invoke<AppSuggestion[]>("app_suggestions").then((s) => (suggestions = s));
+  }
+
+  async function save(config: Config): Promise<boolean> {
+    saving = true;
+    try {
+      configInfo = await invoke<ConfigInfo>("save_config", { config });
+      // deltad polls the file once a second; check what it made of it
+      setTimeout(refreshDeltad, 1500);
+      return true;
+    } catch (problems) {
+      editorProblems = Array.isArray(problems) ? problems : [String(problems)];
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveBinding(binding: Binding, newApp: DeltaApp | null) {
+    const config = editableConfig();
+    const list = config.bindings ?? [];
+    const at = list.findIndex((b) => b.id === binding.id);
+    if (at >= 0) list[at] = binding;
+    else list.push(binding);
+    config.bindings = list;
+    if (newApp) config.apps = [...(config.apps ?? []), newApp];
+    if (await save(config)) editing = null;
+  }
+
+  async function removeBinding(binding: Binding) {
+    if (!confirm(`Remove "${binding.id}"?`)) return;
+    const config = editableConfig();
+    config.bindings = (config.bindings ?? []).filter((b) => b.id !== binding.id);
+    if (!(await save(config))) error = editorProblems.join("; ");
+  }
+
+  async function refreshDeltad() {
+    deltad = await invoke<Record<string, string> | null>("deltad_status");
+  }
 
   async function openKeyboard(i: number) {
     tab = { kind: "keyboard", index: i };
@@ -115,6 +183,7 @@
       if (tab.kind === "keyboard") tab = { kind: "keyboard", index: current };
       if (keyboards[current]?.definition) await invoke("watch_keys", { path: keyboards[current].path });
       await invoke("watch_knobs");
+      refreshDeltad();
     } catch (e) {
       error = String(e);
     } finally {
@@ -226,7 +295,17 @@
     </section>
 
     {#if selectedKey}
-      <KeyPanel key={selectedKey} {keyboard} {layerNames} {bindings} {modifierKey} />
+      <KeyPanel
+        key={selectedKey}
+        {keyboard}
+        {layerNames}
+        {baseLayer}
+        {bindings}
+        {modifierKey}
+        onadd={(keyName) => openEditor(keyName, null)}
+        onedit={(b) => openEditor(b.key, b)}
+        onremove={removeBinding}
+      />
     {:else}
       <p class="muted hint">Click a key to see what it sends on each layer and what Delta does with it.</p>
     {/if}
@@ -234,7 +313,29 @@
     <p class="banner">No keyboard with a VIA interface found. Plug one in over USB and press Re-read.</p>
   {/if}
 
+  {#if editing}
+    <BindingEditor
+      keyName={editing.keyName}
+      binding={editing.binding}
+      config={editableConfig()}
+      {modifierKey}
+      {shortcuts}
+      {suggestions}
+      problems={editorProblems}
+      {saving}
+      onsave={saveBinding}
+      oncancel={() => (editing = null)}
+    />
+  {/if}
+
   <footer>
+    {#if deltad}
+      <span class:note={!!deltad.last_error}>
+        deltad: {deltad.last_error || `applied · xremap ${deltad.xremap} · KWin script ${deltad.kwin_script}`}
+      </span>
+    {:else}
+      <span class="note">deltad isn't running: saved changes take effect after the cutover</span>
+    {/if}
     {#if configInfo}
       <span>Bindings from <code>{configInfo.source}</code></span>
       {#if configInfo.legacy}

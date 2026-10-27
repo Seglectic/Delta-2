@@ -140,7 +140,7 @@ impl Delta {
 
     /// Run a binding's action by ID, as if its hotkey were pressed.
     async fn trigger(&self, id: String) -> fdo::Result<()> {
-        system::invoke_shortcut(&id).await.map_err(|e| fdo::Error::Failed(e.to_string()))
+        system::invoke_shortcut("kwin", &id).await.map_err(|e| fdo::Error::Failed(e.to_string()))
     }
 
     /// Component states, for status displays.

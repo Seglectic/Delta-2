@@ -18,3 +18,4 @@ delta-input = { path = "../../crates/delta-input" }
 delta-via = { path = "../../crates/delta-via" }
 serde = { workspace = true }
 tauri = { version = "2", features = [] }
+zbus.workspace = true

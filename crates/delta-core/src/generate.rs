@@ -36,7 +36,40 @@ fn xremap_chord(send: &str) -> String {
     send.replace('+', "-")
 }
 
-pub fn xremap_config(config: &Config) -> String {
+/// A double-quoted string, valid in both JSON and YAML.
+fn quoted(s: &str) -> String {
+    let mut out = String::from('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => write!(out, "\\u{:04x}", c as u32).unwrap(),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// What xremap does for an action it handles itself (everything but window actions).
+/// `delta_exec` is the `delta` binary, used to fire KDE shortcuts.
+fn xremap_target(action: &Action, delta_exec: &str) -> Option<String> {
+    let launch =
+        |argv: &[&str]| format!("{{launch: [{}]}}", argv.iter().map(|a| quoted(a)).collect::<Vec<_>>().join(", "));
+    match action {
+        Action::Keys { send } => Some(xremap_chord(send)),
+        // Its own scope, so it outlives an xremap restart
+        Action::Command { run } => Some(launch(&["systemd-run", "--user", "--scope", "--quiet", "sh", "-c", run])),
+        Action::KwinShortcut { name, component } => {
+            Some(launch(&[delta_exec, "shortcut", "--component", component, name]))
+        }
+        _ => None,
+    }
+}
+
+pub fn xremap_config(config: &Config, delta_exec: &str) -> String {
     let m = xremap_modifier(config);
     let mut out = String::new();
     writeln!(out, "virtual_modifiers:\n  - {m}\n\nkeymap:\n  - name: delta-layer").unwrap();
@@ -51,10 +84,7 @@ pub fn xremap_config(config: &Config) -> String {
         out.push_str("    remap:\n");
         for b in delta {
             let key = b.key.to_lowercase();
-            let target = match &b.action {
-                Action::Keys { send } => xremap_chord(send),
-                _ => format!("C-A-Super-{key}"),
-            };
+            let target = xremap_target(&b.action, delta_exec).unwrap_or_else(|| format!("C-A-Super-{key}"));
             writeln!(out, "      {m}-{key}: {target}").unwrap();
         }
     }
@@ -69,8 +99,8 @@ pub fn xremap_config(config: &Config) -> String {
     if !global.is_empty() {
         out.push_str("\n  - name: global-keys\n    remap:\n");
         for b in global {
-            if let Action::Keys { send } = &b.action {
-                writeln!(out, "      {}: {}", b.key, xremap_chord(send)).unwrap();
+            if let Some(target) = xremap_target(&b.action, delta_exec) {
+                writeln!(out, "      {}: {target}", b.key).unwrap();
             }
         }
     }
@@ -87,12 +117,12 @@ pub fn xremap_config(config: &Config) -> String {
     for app in apps {
         write!(out, "\n  - name: {app}-appkeys\n    application:\n      only: [\"{app}\"]\n    remap:\n").unwrap();
         for b in config.bindings.iter().filter(|b| b.only_in.as_deref() == Some(app)) {
-            let Action::Keys { send } = &b.action else { continue };
+            let Some(target) = xremap_target(&b.action, delta_exec) else { continue };
             let key = match b.layer {
                 Layer::Base => b.key.clone(),
                 Layer::Delta => format!("{m}-{}", b.key.to_lowercase()),
             };
-            writeln!(out, "      {key}: {}", xremap_chord(send)).unwrap();
+            writeln!(out, "      {key}: {target}").unwrap();
         }
     }
     out
@@ -144,7 +174,7 @@ pub fn kwin_script(config: &Config) -> String {
             }
             Action::Fixed { width, height } => format!("tileFixed({width}, {height})"),
             Action::App { app } => format!("focusOrLaunch(\"{app}\")"),
-            Action::Keys { .. } => continue,
+            Action::Keys { .. } | Action::Command { .. } | Action::KwinShortcut { .. } => continue,
         };
         let shortcut = match b.layer {
             Layer::Delta => format!("Ctrl+Alt+Meta+{}", kde_key(&b.key)),

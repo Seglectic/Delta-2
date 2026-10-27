@@ -327,11 +327,101 @@ fn config() -> ConfigInfo {
     }
 }
 
+/// Validate and save the config edited in the app. deltad (if running) notices the
+/// file change and applies it within a second.
+#[tauri::command]
+fn save_config(config: Config) -> Result<ConfigInfo, Vec<String>> {
+    let paths = Paths::from_env();
+    match config.save(&paths.config) {
+        Ok(()) => Ok(ConfigInfo {
+            config: Some(config),
+            source: paths.config.display().to_string(),
+            legacy: false,
+            problems: vec![],
+        }),
+        Err(delta_core::config::ConfigError::Invalid(p)) => Err(p.0),
+        Err(e) => Err(vec![e.to_string()]),
+    }
+}
+
+/// KDE global shortcuts, for the "KDE shortcut" action picker.
+#[tauri::command]
+async fn shortcuts() -> Result<Vec<delta_core::system::Shortcut>, String> {
+    delta_core::system::list_shortcuts().await.map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct AppSuggestion {
+    /// What xremap matches on (the window class), e.g. `org.kde.konsole`, `firefox`.
+    class: String,
+    name: String,
+}
+
+/// Installed apps, for the "only in this app" picker: window class from each
+/// .desktop file's StartupWMClass, or its desktop ID.
+#[tauri::command]
+fn app_suggestions() -> Vec<AppSuggestion> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [
+        "/usr/share/applications".to_string(),
+        "/var/lib/flatpak/exports/share/applications".to_string(),
+        format!("{home}/.local/share/applications"),
+        format!("{home}/.local/share/flatpak/exports/share/applications"),
+    ];
+    let mut out: Vec<AppSuggestion> = Vec::new();
+    for dir in dirs {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let Some(id) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".desktop")) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let field = |key: &str| {
+                text.lines()
+                    .skip_while(|l| l.trim() != "[Desktop Entry]")
+                    .take_while(|l| !l.starts_with('[') || l.trim() == "[Desktop Entry]")
+                    .find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(str::trim))
+            };
+            if field("NoDisplay") == Some("true") || field("Type") != Some("Application") {
+                continue;
+            }
+            let class = field("StartupWMClass").unwrap_or(id).to_lowercase();
+            if !out.iter().any(|a| a.class == class) {
+                out.push(AppSuggestion { class, name: field("Name").unwrap_or(id).to_string() });
+            }
+        }
+    }
+    out.sort_by_key(|a| a.name.to_lowercase());
+    out
+}
+
+/// deltad's status, or None when it isn't running (before the cutover).
+#[tauri::command]
+async fn deltad_status() -> Option<HashMap<String, String>> {
+    let conn = zbus::Connection::session().await.ok()?;
+    let reply = conn
+        .call_method(Some("org.seglectic.Delta"), "/org/seglectic/Delta", Some("org.seglectic.Delta1"), "Status", &())
+        .await
+        .ok()?;
+    reply.body().deserialize().ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![keyboards, watch_keys, config, mice, watch_mouse, watch_knobs])
+        .invoke_handler(tauri::generate_handler![
+            keyboards,
+            watch_keys,
+            config,
+            mice,
+            watch_mouse,
+            watch_knobs,
+            save_config,
+            shortcuts,
+            app_suggestions,
+            deltad_status
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Delta");
 }

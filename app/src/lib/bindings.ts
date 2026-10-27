@@ -62,6 +62,10 @@ export function shortAction(b: Binding): string {
       return capitalize(b.app);
     case "keys":
       return b.send.replace(/\+/g, " ");
+    case "command":
+      return "▶ " + b.run.split(/\s+/)[0].split("/").pop();
+    case "kwin_shortcut":
+      return "⌘ " + b.name;
   }
 }
 
@@ -86,7 +90,43 @@ export function describeAction(b: Binding): string {
       return `Focus ${capitalize(b.app)}, or launch it`;
     case "keys":
       return `Send ${b.send}`;
+    case "command":
+      return `Run ${b.run}`;
+    case "kwin_shortcut":
+      return `KDE shortcut: ${b.name}${b.component && b.component !== "kwin" ? ` (${b.component})` : ""}`;
   }
+}
+
+/** Window actions run in KWin and can't be limited to one app yet. */
+export function isWindowAction(kind: string): boolean {
+  return kind === "tile" || kind === "span" || kind === "fixed" || kind === "app";
+}
+
+const NAMED: Record<string, string> = {
+  LEFT: "Left",
+  RIGHT: "Right",
+  UP: "Up",
+  DOWN: "Down",
+  SPACE: "Space",
+  TAB: "Tab",
+  ESCAPE: "Esc",
+  HOME: "Home",
+  END: "End",
+};
+
+/** The Delta key name for a firmware keycode, or null if it can't be bound yet.
+ * Only names xremap and KDE agree on: letters, digits, F1–F24, arrows and a few more. */
+export function deltaKeyName(kc: Keycode | undefined): string | null {
+  const m = kc?.name.match(/^KC_(.+)$/);
+  if (!m) return null;
+  const k = m[1];
+  if (/^[A-Z0-9]$/.test(k) || /^F([1-9]|1[0-9]|2[0-4])$/.test(k)) return k;
+  return NAMED[k] ?? null;
+}
+
+/** Keys whose normal job is typing; binding them alone replaces that everywhere. */
+export function typesText(key: string): boolean {
+  return /^([A-Z0-9]|Space|Tab|Esc|Left|Right|Up|Down|Home|End)$/.test(key);
 }
 
 /** When a binding applies, in words. */

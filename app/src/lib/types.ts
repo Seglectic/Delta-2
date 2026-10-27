@@ -55,7 +55,11 @@ export type Action =
   | { action: "span"; x: number; width: number; name?: string }
   | { action: "fixed"; width: number; height: number }
   | { action: "app"; app: string }
-  | { action: "keys"; send: string };
+  | { action: "keys"; send: string }
+  | { action: "command"; run: string }
+  | { action: "kwin_shortcut"; name: string; component?: string };
+
+export type ActionKind = Action["action"];
 
 export type Binding = Action & {
   id: string;
@@ -70,12 +74,27 @@ export interface App {
   name: string;
   launch: string;
   match?: string[];
+  focus_tile?: { layout: string; side: string };
+}
+
+export interface Shortcut {
+  component: string;
+  component_name: string;
+  name: string;
+  label: string;
+}
+
+export interface AppSuggestion {
+  class: string;
+  name: string;
 }
 
 export interface Config {
   engine: { backend: string; modifier_key: string };
   apps?: App[];
   bindings?: Binding[];
+  // Other sections are passed through untouched
+  [section: string]: unknown;
 }
 
 export interface ConfigInfo {
