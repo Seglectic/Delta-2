@@ -6,8 +6,6 @@ case "${1:-}" in
         exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/flatpak run com.discordapp.Discord ;;
     obsidian)
         exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/flatpak run md.obsidian.Obsidian ;;
-    code)
-        exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/code ;;
     konsole)
         exec /usr/bin/systemd-run --user --scope --quiet /usr/bin/konsole ;;
     *)
