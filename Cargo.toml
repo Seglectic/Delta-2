@@ -5,6 +5,7 @@ members = ["crates/delta-core", "crates/delta-cli", "crates/delta-via", "crates/
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 repository = "https://github.com/Seglectic/Delta-2"
 
 [workspace.dependencies]

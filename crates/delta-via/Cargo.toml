@@ -3,6 +3,7 @@ name = "delta-via"
 description = "Read-only VIA client for QMK keyboards: keymaps, encoders, and physical layouts"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 libc = "0.2"
