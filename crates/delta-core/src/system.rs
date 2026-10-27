@@ -125,6 +125,21 @@ where
     conn.call_method(Some("org.kde.KWin"), "/Scripting", Some("org.kde.kwin.Scripting"), method, body).await
 }
 
+/// Fire a Delta action by its binding ID, exactly as if its hotkey were pressed.
+/// The KWin script registers each window action under KWin's shortcut component.
+pub async fn invoke_shortcut(id: &str) -> Result<(), SystemError> {
+    let conn = zbus::Connection::session().await?;
+    conn.call_method(
+        Some("org.kde.kglobalaccel"),
+        "/component/kwin",
+        Some("org.kde.kglobalaccel.Component"),
+        "invokeShortcut",
+        &(id,),
+    )
+    .await?;
+    Ok(())
+}
+
 /// `systemctl --user is-active xremap`: "active", "inactive", "failed", …
 pub fn xremap_state() -> String {
     Command::new("systemctl")

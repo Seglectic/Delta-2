@@ -16,11 +16,9 @@ pub struct Paths {
 impl Paths {
     /// Standard locations under `$HOME` / `$XDG_CONFIG_HOME`.
     pub fn from_env() -> Self {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into()));
-        let config_home =
-            std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config"));
-        let data_home =
-            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share"));
+        let home = env_path("HOME").unwrap_or_else(|| "/".into());
+        let config_home = env_path("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
+        let data_home = env_path("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local/share"));
         Self {
             config: config_home.join("delta/delta.toml"),
             xremap_config: config_home.join("xremap/config.yml"),
@@ -30,4 +28,9 @@ impl Paths {
             legacy_conf: home.join(".local/bin/delta/delta.conf"),
         }
     }
+}
+
+/// An environment variable as a path. Empty or relative values count as unset (XDG spec).
+fn env_path(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute())
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Delta hotkey service
+Documentation=https://github.com/Seglectic/Delta-2
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/deltad
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
