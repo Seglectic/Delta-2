@@ -139,6 +139,12 @@ impl Via {
         Ok(u32::from_be_bytes([r[2], r[3], r[4], r[5]]))
     }
 
+    /// Matrix positions `(row, col)` whose switches are held right now.
+    pub fn pressed(&mut self, rows: u8, cols: u8) -> Result<Vec<(u8, u8)>, ViaError> {
+        let r = self.request(ReadCommand::KeyboardValue(KeyboardValue::SwitchMatrixState))?;
+        Ok(decode_matrix(&r[2..], rows, cols))
+    }
+
     pub fn layer_count(&mut self) -> Result<u8, ViaError> {
         Ok(self.request(ReadCommand::LayerCount)?[1])
     }
@@ -178,9 +184,32 @@ impl Via {
     }
 }
 
+/// QMK sends each row as a big-endian bit field, 1–4 bytes wide depending on the
+/// column count; bit `c` is column `c`.
+fn decode_matrix(data: &[u8], rows: u8, cols: u8) -> Vec<(u8, u8)> {
+    let width = (cols as usize).div_ceil(8).clamp(1, 4);
+    let mut pressed = Vec::new();
+    for row in 0..rows {
+        let start = row as usize * width;
+        let Some(bytes) = data.get(start..start + width) else { break };
+        let bits = bytes.iter().fold(0u32, |acc, b| acc << 8 | *b as u32);
+        pressed.extend((0..cols).filter(|c| bits & (1 << c) != 0).map(|c| (row, c)));
+    }
+    pressed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_matrix_rows() {
+        // 6 rows × 18 cols = 3 bytes per row. Row 0: col 0 and col 17; row 3: col 12
+        let mut data = [0u8; 18];
+        data[0..3].copy_from_slice(&[0x02, 0x00, 0x01]);
+        data[9..12].copy_from_slice(&[0x00, 0x10, 0x00]);
+        assert_eq!(decode_matrix(&data, 6, 18), [(0, 0), (0, 17), (3, 12)]);
+    }
 
     #[test]
     fn parses_hid_id() {

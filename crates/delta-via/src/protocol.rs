@@ -41,6 +41,8 @@ pub const READ_ONLY_IDS: &[u8] = &[
 pub enum KeyboardValue {
     Uptime = 0x01,
     LayoutOptions = 0x02,
+    /// Which switches are held right now (VIA's matrix tester).
+    SwitchMatrixState = 0x03,
     FirmwareVersion = 0x04,
 }
 
@@ -111,6 +113,7 @@ mod tests {
             ReadCommand::ProtocolVersion,
             ReadCommand::KeyboardValue(KeyboardValue::Uptime),
             ReadCommand::KeyboardValue(KeyboardValue::LayoutOptions),
+            ReadCommand::KeyboardValue(KeyboardValue::SwitchMatrixState),
             ReadCommand::KeyboardValue(KeyboardValue::FirmwareVersion),
             ReadCommand::Keycode { layer: 255, row: 255, col: 255 },
             ReadCommand::MacroCount,

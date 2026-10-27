@@ -15,8 +15,8 @@ pub fn list(paths: &Paths) -> Result<()> {
         println!("No keyboards with a VIA interface found.");
     }
     for d in devices {
-        let def = Definition::find(d.vendor_id, d.product_id, Some(&paths.layouts));
-        let layout = def.map_or_else(|| "no layout file".into(), |d| d.name);
+        let def = Definition::load(d.vendor_id, d.product_id, &paths.layouts, &paths.layout_cache, true);
+        let layout = def.map_or_else(|e| e.to_string(), |d| d.name);
         println!("{}  {:04x}:{:04x}  {}  ({layout})", d.path.display(), d.vendor_id, d.product_id, d.name);
     }
     Ok(())
@@ -25,14 +25,8 @@ pub fn list(paths: &Paths) -> Result<()> {
 pub fn dump(paths: &Paths, only_layer: Option<u8>) -> Result<()> {
     let devices = discover();
     let Some(device) = devices.first() else { bail!("No keyboards with a VIA interface found.") };
-    let def = Definition::find(device.vendor_id, device.product_id, Some(&paths.layouts)).with_context(|| {
-        format!(
-            "no layout for {:04x}:{:04x}; put its VIA definition JSON in {}",
-            device.vendor_id,
-            device.product_id,
-            paths.layouts.display()
-        )
-    })?;
+    let def = Definition::load(device.vendor_id, device.product_id, &paths.layouts, &paths.layout_cache, true)
+        .with_context(|| format!("you can also put its VIA definition JSON in {}", paths.layouts.display()))?;
 
     let mut via = Via::open(device)?;
     let protocol = via.protocol_version()?;

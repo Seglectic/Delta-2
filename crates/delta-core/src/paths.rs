@@ -9,8 +9,10 @@ pub struct Paths {
     pub xremap_service: PathBuf,
     pub launcher_unit: PathBuf,
     pub kwin_script: PathBuf,
-    /// Extra VIA keyboard definitions (`*.json`) beyond the built-in ones.
+    /// Your own VIA keyboard definitions (`*.json`); these win over fetched ones.
     pub layouts: PathBuf,
+    /// VIA definitions fetched from usevia.app, by USB ID.
+    pub layout_cache: PathBuf,
     /// The legacy bash install, used as the default `delta import` source.
     pub legacy_conf: PathBuf,
 }
@@ -21,6 +23,7 @@ impl Paths {
         let home = env_path("HOME").unwrap_or_else(|| "/".into());
         let config_home = env_path("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
         let data_home = env_path("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local/share"));
+        let cache_home = env_path("XDG_CACHE_HOME").unwrap_or_else(|| home.join(".cache"));
         Self {
             config: config_home.join("delta/delta.toml"),
             xremap_config: config_home.join("xremap/config.yml"),
@@ -28,6 +31,7 @@ impl Paths {
             launcher_unit: config_home.join("systemd/user/delta-launch@.service"),
             kwin_script: data_home.join("kwin/scripts/delta-tile/contents/code/main.js"),
             layouts: config_home.join("delta/layouts"),
+            layout_cache: cache_home.join("delta/layouts"),
             legacy_conf: home.join(".local/bin/delta/delta.conf"),
         }
     }
