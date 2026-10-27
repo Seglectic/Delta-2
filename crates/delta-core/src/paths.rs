@@ -9,6 +9,8 @@ pub struct Paths {
     pub xremap_service: PathBuf,
     pub launcher_unit: PathBuf,
     pub kwin_script: PathBuf,
+    /// Extra VIA keyboard definitions (`*.json`) beyond the built-in ones.
+    pub layouts: PathBuf,
     /// The legacy bash install, used as the default `delta import` source.
     pub legacy_conf: PathBuf,
 }
@@ -25,6 +27,7 @@ impl Paths {
             xremap_service: config_home.join("systemd/user/xremap.service"),
             launcher_unit: config_home.join("systemd/user/delta-launch@.service"),
             kwin_script: data_home.join("kwin/scripts/delta-tile/contents/code/main.js"),
+            layouts: config_home.join("delta/layouts"),
             legacy_conf: home.join(".local/bin/delta/delta.conf"),
         }
     }

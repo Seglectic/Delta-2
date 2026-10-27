@@ -3,7 +3,6 @@ name = "deltad"
 description = "Delta's background service: owns the config, applies it, and serves the D-Bus API"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 
 [dependencies]
 anyhow.workspace = true

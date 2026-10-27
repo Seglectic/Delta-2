@@ -6,6 +6,8 @@ use delta_core::paths::Paths;
 use delta_core::{Config, import, launch, system};
 use std::path::{Path, PathBuf};
 
+mod keyboard;
+
 #[derive(Parser)]
 #[command(name = "delta", version, about = "Caps Lock layer hotkeys for KDE Plasma")]
 struct Cli {
@@ -46,6 +48,21 @@ enum Cmd {
     Status,
     /// Launch an app from the config (used by delta-launch@.service)
     Launch { app: String },
+    /// Read connected QMK keyboards over VIA (read-only)
+    #[command(subcommand)]
+    Keyboard(KeyboardCmd),
+}
+
+#[derive(Subcommand)]
+enum KeyboardCmd {
+    /// List keyboards with a VIA interface
+    List,
+    /// Draw each layer of a keyboard's keymap as the firmware has it
+    Dump {
+        /// Only this layer
+        #[arg(long)]
+        layer: Option<u8>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -76,6 +93,8 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Status => cmd_status(&paths),
+        Cmd::Keyboard(KeyboardCmd::List) => keyboard::list(&paths),
+        Cmd::Keyboard(KeyboardCmd::Dump { layer }) => keyboard::dump(&paths, layer),
         Cmd::Launch { app } => {
             let config = load(&paths)?;
             Err(launch::exec_app(&config, &app)).with_context(|| format!("launching {app}"))
