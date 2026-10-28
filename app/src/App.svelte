@@ -7,6 +7,7 @@
   import Keyboard from "./lib/Keyboard.svelte";
   import KeyPanel from "./lib/KeyPanel.svelte";
   import MousePanel from "./lib/MousePanel.svelte";
+  import LayoutsPanel from "./lib/LayoutsPanel.svelte";
   import BindingEditor from "./lib/BindingEditor.svelte";
   import LightingPanel from "./lib/LightingPanel.svelte";
   import ProfilePanel from "./lib/ProfilePanel.svelte";
@@ -56,6 +57,7 @@
   let deltad = $state<Record<string, string> | null>(null);
   let setup = $state<SetupState | null>(null);
   let settingUp = $state(false);
+  let showLayouts = $state(false);
   /** A newer release on GitHub (released builds only). */
   let update = $state<Update | null>(null);
   let updating = $state<string | null>(null);
@@ -712,7 +714,10 @@
     <p class="banner error">{error}</p>
   {/if}
   {#if keyboard?.error}
-    <p class="banner error">{keyboard.error}</p>
+    <div class="banner error setup">
+      <span>{keyboard.error}</span>
+      <button onclick={() => (showLayouts = true)}>Layouts…</button>
+    </div>
   {/if}
 
   {#if mouse}
@@ -872,6 +877,10 @@
     <p class="banner">No keyboard with a VIA interface found. Plug one in over USB; Delta picks it up by itself.</p>
   {/if}
 
+  {#if showLayouts}
+    <LayoutsPanel onclose={() => (showLayouts = false)} onchanged={load} />
+  {/if}
+
   {#if editing}
     <BindingEditor
       keyName={editing.keyName}
@@ -889,6 +898,7 @@
   {/if}
 
   <footer>
+    <button class="link" onclick={() => (showLayouts = true)}>Layouts…</button>
     {#if setup}
       <span title={setup.owner.kind === "other" ? `deltad.service runs ${setup.owner.exec}` : ""}>
         Delta {setup.app_version}{setup.dev ? " (dev)" : ""}{deltad?.version && deltad.version !== setup.app_version
@@ -1100,6 +1110,14 @@
   }
   .hint {
     margin: 0;
+  }
+  footer .link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--blue);
+    cursor: pointer;
   }
   footer {
     display: flex;

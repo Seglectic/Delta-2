@@ -4,6 +4,7 @@
 pub mod device;
 pub mod keycode;
 pub mod layout;
+pub mod library;
 pub mod protocol;
 
 pub use device::{LightingState, Via, ViaDevice, ViaError, discover};

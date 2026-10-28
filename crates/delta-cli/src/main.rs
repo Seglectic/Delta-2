@@ -78,6 +78,18 @@ enum KeyboardCmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Download VIA's keyboard layouts in one go, so boards work offline
+    DownloadLayouts {
+        /// Only this USB vendor ID, in hex (Keychron: 3434). Default: every board
+        #[arg(long, value_parser = parse_hex_u16)]
+        vendor: Option<u16>,
+    },
+    /// Use a VIA layout file (JSON) for the board it describes
+    ImportLayout { file: PathBuf },
+}
+
+fn parse_hex_u16(s: &str) -> Result<u16, String> {
+    u16::from_str_radix(s.trim_start_matches("0x"), 16).map_err(|e| e.to_string())
 }
 
 fn main() -> Result<()> {
@@ -112,6 +124,8 @@ fn main() -> Result<()> {
         Cmd::Keyboard(KeyboardCmd::Dump { layer }) => keyboard::dump(&paths, layer),
         Cmd::Keyboard(KeyboardCmd::Backup { out }) => keyboard::backup(&paths, out),
         Cmd::Keyboard(KeyboardCmd::Info) => keyboard::info(&paths),
+        Cmd::Keyboard(KeyboardCmd::DownloadLayouts { vendor }) => keyboard::download_layouts(&paths, vendor),
+        Cmd::Keyboard(KeyboardCmd::ImportLayout { file }) => keyboard::import_layout(&paths, &file),
         Cmd::Shortcut { name, component } if name == "list" => {
             for s in zbus::block_on(system::list_shortcuts())? {
                 println!("{:<14} {:<40} {}", s.component, s.name, s.label);

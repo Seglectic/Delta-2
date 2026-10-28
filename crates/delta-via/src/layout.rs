@@ -149,7 +149,8 @@ impl Definition {
 
 fn hex(v: &Value, field: &'static str) -> Result<u16, LayoutError> {
     let s = v[field].as_str().ok_or(LayoutError::Missing(field))?;
-    u16::from_str_radix(s.trim_start_matches("0x"), 16).map_err(|_| LayoutError::Field { field, value: s.into() })
+    let digits = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+    u16::from_str_radix(digits, 16).map_err(|_| LayoutError::Field { field, value: s.into() })
 }
 
 /// Compiled layout: `keys` are always present; `optionKeys` holds extra keys per
@@ -174,17 +175,17 @@ fn compiled_keys(layouts: &Value) -> Result<Vec<PhysicalKey>, LayoutError> {
         })
     };
 
+    // Decals are labels drawn on the board, and row -1 marks keys without a switch
+    // (VIA keeps both, in `keys` and in `optionKeys`)
+    let wired = |k: &Value| k["d"].as_bool() != Some(true) && k["row"].as_f64().is_none_or(|r| r >= 0.0);
     let mut keys = Vec::new();
-    for k in layouts["keys"].as_array().ok_or(LayoutError::Missing("layouts.keys"))? {
-        // Decals are labels drawn on the board, not keys
-        if k["d"].as_bool() != Some(true) {
-            keys.push(parse(k, None)?);
-        }
+    for k in layouts["keys"].as_array().ok_or(LayoutError::Missing("layouts.keys"))?.iter().filter(|k| wired(k)) {
+        keys.push(parse(k, None)?);
     }
     for (group, choices) in layouts["optionKeys"].as_object().into_iter().flatten() {
         for (choice, list) in choices.as_object().into_iter().flatten() {
             let option = group.parse().ok().zip(choice.parse().ok());
-            for k in list.as_array().into_iter().flatten() {
+            for k in list.as_array().into_iter().flatten().filter(|k| wired(k)) {
                 keys.push(parse(k, option)?);
             }
         }
@@ -195,9 +196,52 @@ fn compiled_keys(layouts: &Value) -> Result<Vec<PhysicalKey>, LayoutError> {
 /// KLE source layout. Property objects change the next key (`x`, `y` offsets, `w`,
 /// `h`, rotation `r`/`rx`/`ry`); after each key the cursor moves right by its width;
 /// each row starts one unit down (back at `rx` when rotated).
+/// KLE stores a key's legends in an order that depends on its alignment (`a`); this
+/// maps (alignment, position in the string) to the legend slot. From kle-serial, which
+/// VIA uses. VIA reads the matrix position from slot 0, the encoder from 4 and the
+/// layout option from 8.
+const KLE_LABEL_MAP: [[i8; 12]; 8] = [
+    [0, 6, 2, 8, 9, 11, 3, 5, 1, 4, 7, 10],
+    [1, 7, -1, -1, 9, 11, 4, -1, -1, -1, -1, 10],
+    [3, -1, 5, -1, 9, 11, -1, -1, 4, -1, -1, 10],
+    [4, -1, -1, -1, 9, 11, -1, -1, -1, -1, -1, 10],
+    [0, 6, 2, 8, 10, -1, 3, 5, 1, 4, 7, -1],
+    [1, 7, -1, -1, 10, -1, 4, -1, -1, -1, -1, -1],
+    [3, -1, 5, -1, 10, -1, -1, -1, 4, -1, -1, -1],
+    [4, -1, -1, -1, 10, -1, -1, -1, -1, -1, -1, -1],
+];
+
+/// A KLE legend string's legends by slot.
+fn kle_labels(label: &str, align: usize) -> [&str; 12] {
+    let mut out = [""; 12];
+    for (i, text) in label.split('\n').enumerate().take(12) {
+        if let Ok(slot) = usize::try_from(KLE_LABEL_MAP[align.min(7)][i]) {
+            out[slot] = text;
+        }
+    }
+    out
+}
+
+/// A key as KLE draws it, before VIA's clean-up.
+struct KleKey {
+    key: PhysicalKey,
+    /// False for decals and knobs without a switch: they're not keys, but VIA still
+    /// counts them when lining the board up.
+    wired: bool,
+    /// Second rectangle of ISO / big-ass Enter shapes.
+    x2: f64,
+    y2: f64,
+    w2: f64,
+    h2: f64,
+}
+
 fn kle_keys(rows: &[Value]) -> Result<Vec<PhysicalKey>, LayoutError> {
     let mut keys = Vec::new();
     let (mut y, mut r, mut rx, mut ry) = (0.0, 0.0, 0.0, 0.0);
+    // Alignment carries over to later keys (VIA starts at 0); the rest apply to the next key only
+    let mut align = 0;
+    let mut decal = false;
+    let mut second = None;
     for row in rows {
         let Some(row) = row.as_array() else { continue };
         let mut x = rx;
@@ -218,23 +262,88 @@ fn kle_keys(rows: &[Value]) -> Result<Vec<PhysicalKey>, LayoutError> {
                     y += num("y").unwrap_or(0.0);
                     w = num("w").unwrap_or(w);
                     h = num("h").unwrap_or(h);
+                    align = num("a").map_or(align, |a| a as usize);
+                    decal = props.get("d").and_then(Value::as_bool).unwrap_or(decal);
+                    if ["x2", "y2", "w2", "h2"].iter().any(|k| props.contains_key(*k)) {
+                        second = Some((num("x2").unwrap_or(0.0), num("y2").unwrap_or(0.0), num("w2"), num("h2")));
+                    }
                 }
                 Value::String(label) => {
-                    let labels: Vec<&str> = label.split('\n').collect();
-                    let (row, col) = pair(labels[0])
-                        .ok_or_else(|| LayoutError::Field { field: "matrix label", value: label.clone() })?;
-                    let encoder = labels.get(9).and_then(|l| l.strip_prefix('e')).and_then(|n| n.parse().ok());
-                    let option = labels.get(8).and_then(|l| pair(l));
-                    keys.push(PhysicalKey { row, col, x, y, w, h, r, rx, ry, encoder, option, color: None });
+                    let labels = kle_labels(label, align);
+                    let encoder = labels[4].strip_prefix(['e', 'E']).and_then(|n| n.trim().parse().ok());
+                    let option = pair(labels[8]);
+                    let mut key = PhysicalKey { row: 0, col: 0, x, y, w, h, r, rx, ry, encoder, option, color: None };
+                    let wired = !(decal || labels[0].is_empty() && encoder.is_some());
+                    if wired {
+                        (key.row, key.col) = pair(labels[0])
+                            .ok_or_else(|| LayoutError::Field { field: "matrix label", value: label.clone() })?;
+                    }
+                    let (x2, y2, w2, h2) = second.take().unwrap_or((0.0, 0.0, None, None));
+                    keys.push(KleKey { key, wired, x2, y2, w2: w2.unwrap_or(w), h2: h2.unwrap_or(h) });
                     x += w;
                     (w, h) = (1.0, 1.0);
+                    decal = false;
                 }
                 _ => {}
             }
         }
         y += 1.0;
     }
-    Ok(keys)
+    align_options(&mut keys);
+    Ok(keys.into_iter().filter(|k| k.wired).map(|k| k.key).collect())
+}
+
+/// What VIA's compiler (the-via/reader, kle-parser.ts) does to KLE layouts: put the
+/// top-left of the default layout (choice 0 of every option, decals included) at 0,0,
+/// and move each option's other choices, drawn off to the side in the source, so their
+/// top-left key sits on choice 0's.
+fn align_options(keys: &mut [KleKey]) {
+    let default = |k: &&KleKey| k.key.option.is_none_or(|(_, choice)| choice == 0);
+    let boxes = keys.iter().filter(default).map(bounding_box);
+    let (min_x, min_y) = boxes.fold((f64::INFINITY, f64::INFINITY), |(x, y), b| (x.min(b.0), y.min(b.1)));
+    if !min_x.is_finite() {
+        return;
+    }
+    // The top row's leftmost key, and of an ISO Enter its upper rectangle
+    let pivot = |keys: &[KleKey], option: (u8, u8)| {
+        let k = keys
+            .iter()
+            .filter(|k| k.key.option == Some(option))
+            .min_by(|a, b| a.key.y.total_cmp(&b.key.y).then(a.key.x.total_cmp(&b.key.x)))?;
+        let second_on_top = if k.y2 == 0.0 { k.x2 < 0.0 } else { k.y2 < 0.0 };
+        Some(if second_on_top { (k.key.x + k.x2, k.key.y + k.y2) } else { (k.key.x, k.key.y) })
+    };
+    let deltas: Vec<_> = keys
+        .iter()
+        .filter_map(|k| k.key.option)
+        .filter(|&(_, choice)| choice > 0)
+        .map(|option| {
+            let zero = pivot(keys, (option.0, 0));
+            let this = pivot(keys, option);
+            let delta = zero.zip(this).map_or((0.0, 0.0), |(z, t)| (t.0 - z.0, t.1 - z.1));
+            (option, delta)
+        })
+        .collect();
+    for KleKey { key: k, .. } in keys.iter_mut() {
+        let (dx, dy) = k.option.and_then(|o| deltas.iter().find(|(d, _)| *d == o)).map_or((0.0, 0.0), |d| d.1);
+        // rx/ry only move with the board, as in VIA
+        (k.x, k.y, k.rx, k.ry) = (k.x - dx - min_x, k.y - dy - min_y, k.rx - min_x, k.ry - min_y);
+    }
+}
+
+/// Top-left corner of a key's box (both rectangles) after rotation.
+fn bounding_box(k: &KleKey) -> (f64, f64) {
+    let KleKey { key, x2, y2, w2, h2, .. } = k;
+    let (x0, y0) = (key.x.min(key.x + x2), key.y.min(key.y + y2));
+    let (x1, y1) = ((key.x + key.w).max(key.x + x2 + w2), (key.y + key.h).max(key.y + y2 + h2));
+    let rad = key.r.to_radians();
+    [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+        .iter()
+        .map(|&(x, y)| {
+            let (nx, ny) = (x - key.rx, y - key.ry);
+            (key.rx + nx * rad.cos() - ny * rad.sin(), key.ry + nx * rad.sin() + ny * rad.cos())
+        })
+        .fold((f64::INFINITY, f64::INFINITY), |(x, y), p| (x.min(p.0), y.min(p.1)))
 }
 
 /// `"3,12"` → (3, 12)
@@ -256,7 +365,7 @@ mod tests {
         "layouts": {"keymap": [
             ["0,0", {"x": 1}, "0,1", "0,2\n\n\n\n\n\n\n\n\ne0"],
             [{"y": 0.25, "w": 2}, "1,0", {"h": 2}, "1,2"],
-            ["2,0\n\n\n\n\n\n\n\n0,0", {"w": 2}, "2,0\n\n\n\n\n\n\n\n0,1"]
+            ["2,0\n\n\n0,0", {"w": 2}, "2,0\n\n\n0,1", {"d": true}, "\n\n\n0,1"]
         ]}
     }"#;
 
@@ -274,7 +383,7 @@ mod tests {
             {"row": 9, "col": 9, "x": 0, "y": 3, "w": 1, "h": 1, "d": true}
         ], "optionKeys": {"0": {
             "0": [{"row": 2, "col": 0, "x": 0, "y": 2.25, "w": 1, "h": 1}],
-            "1": [{"row": 2, "col": 0, "x": 1, "y": 2.25, "w": 2, "h": 1}]
+            "1": [{"row": 2, "col": 0, "x": 0, "y": 2.25, "w": 2, "h": 1}]
         }}}
     }"#;
 
@@ -282,7 +391,13 @@ mod tests {
     type Geometry = (u8, u8, f64, f64, f64, f64, Option<u8>, Option<(u8, u8)>);
 
     fn geometry(d: &Definition) -> Vec<Geometry> {
-        let mut g: Vec<_> = d.keys.iter().map(|k| (k.row, k.col, k.x, k.y, k.w, k.h, k.encoder, k.option)).collect();
+        // Rotated keys pick up float noise in the last digits
+        let round = |v: f64| (v * 1e6).round() / 1e6;
+        let mut g: Vec<_> = d
+            .keys
+            .iter()
+            .map(|k| (k.row, k.col, round(k.x), round(k.y), k.w, k.h, k.encoder, k.option))
+            .collect();
         g.sort_by(|a, b| a.partial_cmp(b).unwrap());
         g
     }

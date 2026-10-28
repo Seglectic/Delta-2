@@ -543,6 +543,24 @@ async fn deltad_status() -> Option<HashMap<String, String>> {
     reply.body().deserialize().ok()
 }
 
+/// Fetch VIA's layouts in one download (only `vendor`'s, e.g. Keychron 0x3434, if given).
+#[tauri::command]
+async fn download_layouts(vendor: Option<u16>) -> Result<delta_via::library::Downloaded, String> {
+    let cache = Paths::from_env().layout_cache;
+    tauri::async_runtime::spawn_blocking(move || delta_via::library::download_all(&cache, vendor))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Use a VIA layout file for the board it describes. Returns the board's name.
+#[tauri::command]
+async fn import_layout(path: String) -> Result<String, String> {
+    let def = delta_via::library::import(std::path::Path::new(&path), &Paths::from_env().layouts)
+        .map_err(|e| e.to_string())?;
+    Ok(format!("{} ({:04x}:{:04x})", def.name, def.vendor_id, def.product_id))
+}
+
 /// Installation and permission state, for the setup banner and status line.
 #[derive(Serialize)]
 struct SetupState {
@@ -620,6 +638,7 @@ pub fn run() {
         .manage(AppState::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if !cfg!(debug_assertions) {
                 let handle = app.handle().clone();
@@ -645,7 +664,9 @@ pub fn run() {
             preview_lighting,
             preview_effect,
             setup_state,
-            run_setup
+            run_setup,
+            download_layouts,
+            import_layout
         ])
         .run(tauri::generate_context!())
         .expect("error while running Delta");

@@ -137,6 +137,25 @@ pub fn backup(paths: &Paths, out: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+pub fn download_layouts(paths: &Paths, vendor: Option<u16>) -> Result<()> {
+    println!("Downloading VIA's keyboard layouts…");
+    let done = delta_via::library::download_all(&paths.layout_cache, vendor)?;
+    println!(
+        "{} new, {} already there, {} unreadable; saved in {}",
+        done.saved,
+        done.cached,
+        done.unreadable,
+        paths.layout_cache.display()
+    );
+    Ok(())
+}
+
+pub fn import_layout(paths: &Paths, file: &std::path::Path) -> Result<()> {
+    let def = delta_via::library::import(file, &paths.layouts)?;
+    println!("{} ({:04x}:{:04x}) now uses this layout", def.name, def.vendor_id, def.product_id);
+    Ok(())
+}
+
 /// Unix seconds → `YYYY-MM-DD` (UTC), without a date library.
 fn civil_date(unix: u64) -> String {
     // Howard Hinnant's days-to-civil algorithm
