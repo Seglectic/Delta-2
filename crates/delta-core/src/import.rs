@@ -54,6 +54,7 @@ pub fn import_conf(text: &str) -> Imported {
     config.engine = Engine {
         backend: Backend::Xremap,
         modifier_key: get("device", "modifier_key").filter(|v| !v.is_empty()).unwrap_or_else(|| "capslock".into()),
+        ..Engine::default()
     };
     if let Some(backend) = get("device", "backend")
         && !backend.is_empty()
@@ -113,6 +114,7 @@ pub fn import_conf(text: &str) -> Imported {
             key,
             layer: Layer::Base,
             only_in: None,
+            taps: 1,
             action,
         });
     }
@@ -135,6 +137,7 @@ pub fn import_conf(text: &str) -> Imported {
             only_in: Some(app.into()),
             label: None,
             color: None,
+            taps: 1,
             action: Action::Keys { send: target },
         });
     }
@@ -225,7 +228,7 @@ fn parse_binding(id: &str, f: &[&str]) -> Result<Binding, String> {
         }
         None => return Err("missing action".into()),
     };
-    Ok(Binding { id: id.into(), key, layer: Layer::Delta, only_in: None, label: None, color: None, action })
+    Ok(Binding { id: id.into(), key, layer: Layer::Delta, only_in: None, label: None, color: None, taps: 1, action })
 }
 
 /// `[section]` → its non-comment, non-blank lines, in file order. Sections may repeat.

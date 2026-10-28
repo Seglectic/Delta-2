@@ -77,6 +77,8 @@ export type Binding = Action & {
   label?: string;
   /** #RRGGBB key colour while Caps is held. */
   color?: string;
+  /** Tap dance: fire on this many quick presses. Missing means 1. */
+  taps?: number;
 };
 
 export interface App {
@@ -105,7 +107,7 @@ export interface AppChoice {
 }
 
 export interface Config {
-  engine: { backend: string; modifier_key: string };
+  engine: { backend: string; modifier_key: string; tap_ms?: number };
   apps?: App[];
   bindings?: Binding[];
   lighting?: {

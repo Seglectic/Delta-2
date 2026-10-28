@@ -81,10 +81,8 @@ fn save_from_tarball(reader: impl Read, cache_dir: &Path, vendor_id: Option<u16>
 /// Copy a VIA layout file into `user_dir` (where it wins over downloaded ones) after
 /// checking it parses. Returns the board it describes.
 pub fn import(file: &Path, user_dir: &Path) -> Result<Definition, LibraryError> {
-    let json = std::fs::read_to_string(file).map_err(|source| LibraryError::Write {
-        path: file.display().to_string(),
-        source,
-    })?;
+    let json = std::fs::read_to_string(file)
+        .map_err(|source| LibraryError::Write { path: file.display().to_string(), source })?;
     let def = Definition::parse(&json)?;
     write(&cache_path(user_dir, def.vendor_id, def.product_id), &json)?;
     Ok(def)

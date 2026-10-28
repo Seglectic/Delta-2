@@ -38,11 +38,22 @@ pub struct Engine {
     /// whose firmware maps Caps Lock to F20.
     #[serde(default = "default_modifier_key")]
     pub modifier_key: String,
+    /// Tap dance: how long to wait for another tap before acting, in milliseconds.
+    #[serde(default = "default_tap_ms", skip_serializing_if = "is_default_tap_ms")]
+    pub tap_ms: u32,
+}
+
+fn default_tap_ms() -> u32 {
+    250
+}
+
+fn is_default_tap_ms(ms: &u32) -> bool {
+    *ms == default_tap_ms()
 }
 
 impl Default for Engine {
     fn default() -> Self {
-        Self { backend: Backend::default(), modifier_key: default_modifier_key() }
+        Self { backend: Backend::default(), modifier_key: default_modifier_key(), tap_ms: default_tap_ms() }
     }
 }
 
@@ -259,13 +270,59 @@ pub struct Binding {
     /// Key colour while the delta key is held, e.g. `#89B4FA`. Defaults by action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Tap dance: fire on this many quick presses (1–3). Bindings on the same key with
+    /// different `taps` share it; a single tap then waits `engine.tap_ms` for more.
+    #[serde(default = "one_tap", skip_serializing_if = "is_one_tap")]
+    pub taps: u8,
     #[serde(flatten)]
     pub action: Action,
 }
 
+fn one_tap() -> u8 {
+    1
+}
+
+fn is_one_tap(taps: &u8) -> bool {
+    *taps == 1
+}
+
+/// Most taps a binding can ask for.
+pub const MAX_TAPS: u8 = 3;
+
 impl Binding {
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| format!("Delta: {}", self.id))
+    }
+
+    /// Name of the KDE shortcut (no key of its own) that runs this binding's window
+    /// action when it's part of a tap dance; deltad fires it after counting taps.
+    pub fn tap_shortcut(&self) -> String {
+        format!("{}.tap", self.id)
+    }
+}
+
+/// Bindings sharing one key (and layer) by tap count. The key's KDE shortcut only
+/// reports the tap to deltad, which counts and runs the right binding.
+#[derive(Debug)]
+pub struct TapGroup<'a> {
+    /// `delta:a` / `base:f19`: what the KWin script reports to deltad.
+    pub name: String,
+    /// ID the key's shortcut is registered under: the single-tap binding's, so KDE's
+    /// stored key for it keeps working.
+    pub shortcut_id: String,
+    pub label: String,
+    pub layer: Layer,
+    pub key: &'a str,
+    pub members: Vec<&'a Binding>,
+}
+
+impl TapGroup<'_> {
+    pub fn max_taps(&self) -> u8 {
+        self.members.iter().map(|b| b.taps).max().unwrap_or(1)
+    }
+
+    pub fn member(&self, taps: u8) -> Option<&Binding> {
+        self.members.iter().copied().find(|b| b.taps == taps)
     }
 }
 
@@ -441,6 +498,42 @@ impl Config {
         std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)).map_err(err)
     }
 
+    /// Keys with a tap dance: every key (outside per-app bindings) where some binding
+    /// asks for more than one tap.
+    pub fn tap_groups(&self) -> Vec<TapGroup<'_>> {
+        let mut groups: Vec<TapGroup> = Vec::new();
+        for b in self.bindings.iter().filter(|b| b.only_in.is_none()) {
+            let key = b.key.to_lowercase();
+            let layer = match b.layer {
+                Layer::Delta => "delta",
+                Layer::Base => "base",
+            };
+            let name = format!("{layer}:{key}");
+            match groups.iter_mut().find(|g| g.name == name) {
+                Some(g) => g.members.push(b),
+                None => groups.push(TapGroup {
+                    name,
+                    shortcut_id: String::new(),
+                    label: String::new(),
+                    layer: b.layer,
+                    key: &b.key,
+                    members: vec![b],
+                }),
+            }
+        }
+        groups.retain(|g| g.max_taps() > 1);
+        for g in &mut groups {
+            (g.shortcut_id, g.label) = match g.member(1) {
+                Some(single) => (single.id.clone(), single.label()),
+                None => {
+                    let id = format!("DeltaTap_{}", g.name.replace(':', "_"));
+                    (id, format!("Delta: tap dance on {}", g.key))
+                }
+            };
+        }
+        groups
+    }
+
     pub fn app(&self, name: &str) -> Option<&App> {
         self.apps.iter().find(|a| a.name == name)
     }
@@ -539,14 +632,33 @@ impl Config {
             }
         }
 
-        // One action per trigger: the same key, layer and app can't do two things
+        // One action per trigger: the same key, layer, app and tap count can't do two things
         let mut triggers = HashSet::new();
         for b in &self.bindings {
-            let trigger = (b.key.to_lowercase(), b.layer, b.only_in.as_deref());
+            let trigger = (b.key.to_lowercase(), b.layer, b.only_in.as_deref(), b.taps);
             if !triggers.insert(trigger) {
                 let when = b.only_in.as_deref().map(|a| format!(" in {a}")).unwrap_or_default();
-                problems
-                    .push(format!("binding {:?}: {:?} on the {:?} layer{when} is already bound", b.id, b.key, b.layer));
+                let taps = if b.taps > 1 { format!(" ({} taps)", b.taps) } else { String::new() };
+                problems.push(format!(
+                    "binding {:?}: {:?} on the {:?} layer{when}{taps} is already bound",
+                    b.id, b.key, b.layer
+                ));
+            }
+            if !(1..=MAX_TAPS).contains(&b.taps) {
+                problems.push(format!("binding {:?}: taps is 1 to {MAX_TAPS}", b.id));
+            }
+            if b.taps > 1 && b.only_in.is_some() {
+                problems.push(format!("binding {:?}: tap dance doesn't work in per-app bindings yet", b.id));
+            }
+        }
+        for group in self.tap_groups() {
+            for b in &group.members {
+                if matches!(b.action, Action::Keys { .. }) {
+                    problems.push(format!(
+                        "binding {:?}: {} has a tap dance, and those can't send keys yet",
+                        b.id, group.key
+                    ));
+                }
             }
         }
 

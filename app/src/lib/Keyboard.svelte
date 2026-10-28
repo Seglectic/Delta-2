@@ -58,7 +58,10 @@
     const own = bindingsFor(kc, bindings);
     const isModifier = kc?.name === qmkName(modifierKey);
     if (deltaView) {
-      const action = own.find((b) => isDeltaLayer(b) && !b.only_in);
+      // The single tap's, if the key has a tap dance
+      const action = own
+        .filter((b) => isDeltaLayer(b) && !b.only_in)
+        .sort((a, b) => (a.taps ?? 1) - (b.taps ?? 1))[0];
       return {
         main: isModifier ? "Δ" : action ? shortAction(action) : (kc?.label ?? ""),
         sub: action ? kc?.label : undefined,

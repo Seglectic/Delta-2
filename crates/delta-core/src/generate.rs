@@ -75,17 +75,25 @@ pub fn xremap_config(config: &Config, delta_exec: &str) -> String {
     writeln!(out, "virtual_modifiers:\n  - {m}\n\nkeymap:\n  - name: delta-layer").unwrap();
 
     // Delta layer, all apps: window actions become the Ctrl+Alt+Meta chord KDE
-    // listens for; key actions send their chord directly.
+    // listens for; key actions send their chord directly. A key with a tap dance always
+    // sends the chord: KDE reports each tap to deltad, which counts.
+    let taps = config.tap_groups();
+    let tapped = |b: &Binding| taps.iter().any(|g| g.members.iter().any(|m| m.id == b.id));
     let delta: Vec<&Binding> =
         config.bindings.iter().filter(|b| b.layer == Layer::Delta && b.only_in.is_none()).collect();
     if delta.is_empty() {
         out.push_str("    remap: {}\n");
     } else {
         out.push_str("    remap:\n");
+        let mut seen = Vec::new();
         for b in delta {
             let key = b.key.to_lowercase();
-            let target = xremap_target(&b.action, delta_exec).unwrap_or_else(|| format!("C-A-Super-{key}"));
-            writeln!(out, "      {m}-{key}: {target}").unwrap();
+            if seen.contains(&key) {
+                continue;
+            }
+            let target = if tapped(b) { None } else { xremap_target(&b.action, delta_exec) };
+            writeln!(out, "      {m}-{key}: {}", target.unwrap_or_else(|| format!("C-A-Super-{key}"))).unwrap();
+            seen.push(key);
         }
     }
 
@@ -94,7 +102,7 @@ pub fn xremap_config(config: &Config, delta_exec: &str) -> String {
     let global: Vec<&Binding> = config
         .bindings
         .iter()
-        .filter(|b| b.layer == Layer::Base && b.only_in.is_none() && !b.action.is_window_action())
+        .filter(|b| b.layer == Layer::Base && b.only_in.is_none() && !b.action.is_window_action() && !tapped(b))
         .collect();
     if !global.is_empty() {
         out.push_str("\n  - name: global-keys\n    remap:\n");
@@ -163,27 +171,55 @@ pub fn kwin_script(config: &Config) -> String {
 
     out.push_str(KWIN_FUNCS);
 
+    let taps = config.tap_groups();
+    let shortcut_for = |layer: Layer, key: &str| match layer {
+        Layer::Delta => format!("Ctrl+Alt+Meta+{}", kde_key(key)),
+        Layer::Base => kde_key(key),
+    };
     for b in config.bindings.iter().filter(|b| b.only_in.is_none()) {
-        let call = match &b.action {
-            Action::Tile { layout, side } => {
-                format!("tileIntoLayout(\"{}\", \"{}\")", layout.as_str(), side.as_str())
-            }
-            Action::Span { x, width, name } => {
-                let name = name.clone().unwrap_or_else(|| b.key.to_lowercase());
-                format!("tile(\"{name}\", {x}, {width})")
-            }
-            Action::Fixed { width, height } => format!("tileFixed({width}, {height})"),
-            Action::App { app } => format!("focusOrLaunch(\"{app}\")"),
-            Action::Keys { .. } | Action::Command { .. } | Action::KwinShortcut { .. } => continue,
+        let call = match window_call(&b.action, &b.key) {
+            Some(call) => call,
+            None => continue,
         };
-        let shortcut = match b.layer {
-            Layer::Delta => format!("Ctrl+Alt+Meta+{}", kde_key(&b.key)),
-            Layer::Base => kde_key(&b.key),
-        };
+        // Part of a tap dance: no key of its own, deltad fires it by name
+        if taps.iter().any(|g| g.members.iter().any(|m| m.id == b.id)) {
+            let label = format!("{} (tap ×{})", b.label(), b.taps);
+            writeln!(out, "registerShortcut(\"{}\", \"{label}\", \"\", function() {{ {call}; }});", b.tap_shortcut())
+                .unwrap();
+            continue;
+        }
+        let shortcut = shortcut_for(b.layer, &b.key);
         writeln!(out, "registerShortcut(\"{}\", \"{}\", \"{shortcut}\", function() {{ {call}; }});", b.id, b.label())
             .unwrap();
     }
+    for g in &taps {
+        writeln!(
+            out,
+            "registerShortcut(\"{}\", \"{}\", \"{}\", function() {{ callDBus(\"org.seglectic.Delta\", \"/org/seglectic/Delta\", \"org.seglectic.Delta1\", \"Tap\", \"{}\"); }});",
+            g.shortcut_id,
+            g.label,
+            shortcut_for(g.layer, g.key),
+            g.name
+        )
+        .unwrap();
+    }
     out
+}
+
+/// The KWin script call for a window action.
+fn window_call(action: &Action, key: &str) -> Option<String> {
+    Some(match action {
+        Action::Tile { layout, side } => {
+            format!("tileIntoLayout(\"{}\", \"{}\")", layout.as_str(), side.as_str())
+        }
+        Action::Span { x, width, name } => {
+            let name = name.clone().unwrap_or_else(|| key.to_lowercase());
+            format!("tile(\"{name}\", {x}, {width})")
+        }
+        Action::Fixed { width, height } => format!("tileFixed({width}, {height})"),
+        Action::App { app } => format!("focusOrLaunch(\"{app}\")"),
+        Action::Keys { .. } | Action::Command { .. } | Action::KwinShortcut { .. } => return None,
+    })
 }
 
 /// The `delta-launch@.service` template. KWin starts `delta-launch@<app>.service`

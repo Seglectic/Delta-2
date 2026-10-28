@@ -193,3 +193,131 @@ fn command_and_shortcut_actions_go_through_xremap() {
     // None of them register a KDE shortcut of their own
     assert!(!generate::kwin_script(&config).contains("registerShortcut(\"Notes\""));
 }
+
+const TAP_DANCE: &str = r#"
+    [engine]
+    modifier_key = "f20"
+
+    [[apps]]
+    name = "dolphin"
+    launch = "dolphin"
+
+    [[bindings]]
+    id = "Left"
+    key = "A"
+    action = "tile"
+    layout = "thirds_right"
+    side = "left"
+
+    [[bindings]]
+    id = "LeftHalf"
+    key = "A"
+    taps = 2
+    action = "tile"
+    layout = "halves"
+    side = "left"
+
+    [[bindings]]
+    id = "Files3"
+    key = "F"
+    taps = 3
+    action = "app"
+    app = "dolphin"
+
+    [[bindings]]
+    id = "Notes"
+    key = "N"
+    action = "command"
+    run = "kate"
+
+    [[bindings]]
+    id = "Notes2"
+    key = "N"
+    taps = 2
+    action = "kwin_shortcut"
+    name = "Overview"
+"#;
+
+#[test]
+fn tap_dance_keys_report_taps_to_deltad() {
+    let config = Config::from_toml(TAP_DANCE).unwrap();
+    config.validate().unwrap();
+
+    let groups = config.tap_groups();
+    let names: Vec<_> = groups.iter().map(|g| (g.name.as_str(), g.shortcut_id.as_str(), g.max_taps())).collect();
+    assert_eq!(names, [("delta:a", "Left", 2), ("delta:f", "DeltaTap_delta_f", 3), ("delta:n", "Notes", 2)]);
+
+    // xremap: every tap key just sends the chord, once, even the command one
+    let xremap = generate::xremap_config(&config, "/bin/delta");
+    for key in ["a", "f", "n"] {
+        assert_eq!(xremap.matches(&format!("F20-{key}:")).count(), 1, "{xremap}");
+        assert!(xremap.contains(&format!("F20-{key}: C-A-Super-{key}")), "{xremap}");
+    }
+
+    // KWin: the key's shortcut reports the tap; window actions get key-less shortcuts
+    let js = generate::kwin_script(&config);
+    assert!(js.contains(r#"registerShortcut("Left", "Delta: Left", "Ctrl+Alt+Meta+A", function() { callDBus("#));
+    assert!(js.contains(r#""Tap", "delta:a""#));
+    assert!(js.contains(r#"registerShortcut("Left.tap", "Delta: Left (tap ×1)", "", function() { tileIntoLayout("#));
+    assert!(js.contains(r#"registerShortcut("LeftHalf.tap", "#));
+    assert!(js.contains(r#"registerShortcut("DeltaTap_delta_f", "Delta: tap dance on F", "Ctrl+Alt+Meta+F""#));
+    assert!(js.contains(r#"registerShortcut("Notes", "Delta: Notes", "Ctrl+Alt+Meta+N""#));
+    assert!(!js.contains("Notes.tap") && !js.contains("Notes2.tap"), "deltad runs those itself");
+    assert_eq!(js.matches(r#""Ctrl+Alt+Meta+A""#).count(), 1);
+
+    if let Ok(node) = which_node() {
+        let file = std::env::temp_dir().join(format!("delta-tap-{}.js", std::process::id()));
+        std::fs::write(&file, &js).unwrap();
+        let status = std::process::Command::new(&node).arg("--check").arg(&file).status().unwrap();
+        std::fs::remove_file(&file).ok();
+        assert!(status.success(), "generated KWin script doesn't parse");
+    }
+}
+
+#[test]
+fn tap_dance_rules() {
+    let bad = TAP_DANCE.to_string()
+        + r#"
+    [[bindings]]
+    id = "LeftAgain"
+    key = "a"
+    taps = 2
+    action = "command"
+    run = "true"
+
+    [[bindings]]
+    id = "Four"
+    key = "Z"
+    taps = 4
+    action = "command"
+    run = "true"
+
+    [[bindings]]
+    id = "Send"
+    key = "N"
+    taps = 3
+    action = "keys"
+    send = "Alt+Up"
+
+    [[bindings]]
+    id = "PerApp"
+    key = "K"
+    taps = 2
+    only_in = "dolphin"
+    action = "keys"
+    send = "Alt+Up"
+    "#;
+    let problems = Config::from_toml(&bad).unwrap().validate().unwrap_err().0;
+    let has = |s: &str| problems.iter().any(|p| p.contains(s));
+    assert!(has(r#""LeftAgain": "a" on the Delta layer (2 taps) is already bound"#), "{problems:#?}");
+    assert!(has(r#""Four": taps is 1 to 3"#), "{problems:#?}");
+    assert!(has(r#""Send": N has a tap dance, and those can't send keys yet"#), "{problems:#?}");
+    assert!(has(r#""PerApp": tap dance doesn't work in per-app bindings yet"#), "{problems:#?}");
+    assert_eq!(problems.len(), 4, "{problems:#?}");
+
+    // Round trip: taps survive saving, single taps don't write the field
+    let config = Config::from_toml(TAP_DANCE).unwrap();
+    let toml = config.to_toml();
+    assert_eq!(toml.matches("taps = ").count(), 3, "{toml}");
+    assert_eq!(Config::from_toml(&toml).unwrap(), config);
+}

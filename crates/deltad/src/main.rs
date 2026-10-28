@@ -16,6 +16,7 @@ use zbus::object_server::SignalEmitter;
 
 mod effects;
 mod highlight;
+mod taps;
 use zbus::{fdo, interface};
 
 const BUS_NAME: &str = "org.seglectic.Delta";
@@ -46,6 +47,7 @@ struct Delta {
     window_reply: Mutex<Option<oneshot::Sender<String>>>,
     /// The current config, for the key-highlight thread.
     shared: highlight::Shared,
+    taps: taps::Counter,
 }
 
 impl Delta {
@@ -55,7 +57,17 @@ impl Delta {
             .and_then(|exe| exe.canonicalize().ok())
             .and_then(|exe| exe.parent().map(|dir| dir.join("delta")))
             .unwrap_or_else(|| "delta".into());
-        Self { paths, launcher, config: None, seen: None, last_error: None, window_reply: Mutex::new(None), shared }
+        let taps = taps::Counter::new(shared.config.clone());
+        Self {
+            paths,
+            launcher,
+            config: None,
+            seen: None,
+            last_error: None,
+            window_reply: Mutex::new(None),
+            shared,
+            taps,
+        }
     }
 
     fn file_mtime(&self) -> Option<SystemTime> {
@@ -190,6 +202,12 @@ impl Delta {
         if let Some(tx) = self.window_reply.lock().unwrap().take() {
             let _ = tx.send(json);
         }
+    }
+
+    /// Called by the KWin script on each press of a key with a tap dance (`delta:a`);
+    /// the matching binding runs once the taps stop.
+    fn tap(&self, group: String) {
+        self.taps.tap(group);
     }
 
     /// Called by the KWin script whenever another window gets focus.

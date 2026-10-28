@@ -49,6 +49,7 @@
   const b = seed.binding as Record<string, any> | null;
   let layer = $state<"delta" | "base">(seed.binding?.layer ?? "delta");
   let scoped = $state(!!seed.binding?.only_in);
+  let taps = $state<number>(seed.binding?.taps ?? 1);
   let onlyIn = $state(seed.binding?.only_in ?? "");
   let kind = $state<ActionKind>(seed.binding?.action ?? "tile");
   let tileLayout = $state<string>(b?.layout ?? "halves");
@@ -73,6 +74,18 @@
   );
 
   const windowAction = $derived(isWindowAction(kind));
+  /** This key (on this layer) counts taps: this binding or another one on it wants more than one. */
+  const tapDance = $derived(
+    taps > 1 ||
+      (seed.config.bindings ?? []).some(
+        (o) =>
+          o.id !== binding?.id &&
+          o.key.toLowerCase() === keyName.toLowerCase() &&
+          (o.layer ?? "delta") === layer &&
+          !o.only_in &&
+          (o.taps ?? 1) > 1,
+      ),
+  );
   const pickedShortcut = $derived(
     shortcuts.find((s) => s.label === shortcutQuery) ?? shortcuts.find((s) => s.name === shortcutQuery),
   );
@@ -158,6 +171,7 @@
       ...(layer === "base" ? { layer: "base" } : {}),
       ...(scoped && onlyIn.trim() ? { only_in: onlyIn.trim() } : {}),
       ...(customColor ? { color: color.toUpperCase() } : {}),
+      ...(taps > 1 ? { taps } : {}),
       ...action,
     } as Binding;
     onsave(out, createdApp);
@@ -183,6 +197,19 @@
         <label><input type="radio" bind:group={layer} value="base" /> {keyName} on its own</label>
         {#if warnTyping}
           <p class="warn">{keyName} on its own types; this replaces that everywhere.</p>
+        {/if}
+        <div class="row taps">
+          <span>Tap</span>
+          <label><input type="radio" bind:group={taps} value={1} /> once</label>
+          <label><input type="radio" bind:group={taps} value={2} /> twice</label>
+          <label><input type="radio" bind:group={taps} value={3} /> 3 times</label>
+        </div>
+        {#if tapDance}
+          <p class="hint">
+            {keyName} has a tap dance: Delta waits {seed.config.engine?.tap_ms ?? 250} ms after a tap to see if
+            another follows, then runs the action for that many taps. Works everywhere (not per app), and can't
+            send keys yet.
+          </p>
         {/if}
       </fieldset>
 

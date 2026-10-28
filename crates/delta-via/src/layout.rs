@@ -393,11 +393,8 @@ mod tests {
     fn geometry(d: &Definition) -> Vec<Geometry> {
         // Rotated keys pick up float noise in the last digits
         let round = |v: f64| (v * 1e6).round() / 1e6;
-        let mut g: Vec<_> = d
-            .keys
-            .iter()
-            .map(|k| (k.row, k.col, round(k.x), round(k.y), k.w, k.h, k.encoder, k.option))
-            .collect();
+        let mut g: Vec<_> =
+            d.keys.iter().map(|k| (k.row, k.col, round(k.x), round(k.y), k.w, k.h, k.encoder, k.option)).collect();
         g.sort_by(|a, b| a.partial_cmp(b).unwrap());
         g
     }

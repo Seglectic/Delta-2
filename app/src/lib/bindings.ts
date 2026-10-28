@@ -131,7 +131,8 @@ export function typesText(key: string): boolean {
 
 /** When a binding applies, in words. */
 export function whenText(b: Binding, modifierKey: string): string {
-  const held = isDeltaLayer(b) ? `Hold ${modifierLabel(modifierKey)} + ${b.key}` : b.key;
+  const taps = b.taps && b.taps > 1 ? `, tap ${b.taps === 2 ? "twice" : `${b.taps} times`}` : "";
+  const held = (isDeltaLayer(b) ? `Hold ${modifierLabel(modifierKey)} + ${b.key}` : b.key) + taps;
   return b.only_in ? `${held}, only in ${b.only_in}` : held;
 }
 
