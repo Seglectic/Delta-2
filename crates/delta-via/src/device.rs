@@ -341,7 +341,7 @@ impl Via {
             let r = self.request(ReadCommand::KeymapBuffer { offset: bytes.len() as u16, size })?;
             bytes.extend_from_slice(&r[4..4 + size as usize]);
         }
-        let codes: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_be_bytes([b[0], b[1]])).collect();
+        let codes: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&b| u16::from_be_bytes(b)).collect();
         Ok(codes
             .chunks(rows as usize * cols as usize)
             .map(|layer| layer.chunks(cols as usize).map(<[u16]>::to_vec).collect())
