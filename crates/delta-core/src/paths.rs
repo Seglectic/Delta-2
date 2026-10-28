@@ -17,6 +17,15 @@ pub struct Paths {
     pub backups: PathBuf,
     /// The legacy bash install, used as the default `delta import` source.
     pub legacy_conf: PathBuf,
+    /// Where the released app installs deltad, delta and xremap.
+    pub bin_dir: PathBuf,
+    /// deltad's systemd user unit.
+    pub deltad_unit: PathBuf,
+    /// `delta` on PATH: a link into `bin_dir` for the released app.
+    pub cli_link: PathBuf,
+    /// Menu entry for the AppImage, and its icon.
+    pub desktop_entry: PathBuf,
+    pub icon: PathBuf,
 }
 
 impl Paths {
@@ -36,6 +45,11 @@ impl Paths {
             layout_cache: cache_home.join("delta/layouts"),
             backups: data_home.join("delta/backups"),
             legacy_conf: home.join(".local/bin/delta/delta.conf"),
+            bin_dir: data_home.join("delta/bin"),
+            deltad_unit: config_home.join("systemd/user/deltad.service"),
+            cli_link: home.join(".local/bin/delta"),
+            desktop_entry: data_home.join("applications/com.seglectic.delta.desktop"),
+            icon: data_home.join("icons/hicolor/128x128/apps/com.seglectic.delta.png"),
         }
     }
 }

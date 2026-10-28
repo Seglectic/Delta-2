@@ -2,6 +2,7 @@
 //! held, listens to mice and knob turns without grabbing anything, and loads the
 //! Delta config. The window is Svelte (`app/src`).
 
+use delta_core::install::{self, Owner, Permissions};
 use delta_core::paths::Paths;
 use delta_core::{Config, import};
 use delta_via::keycode::{Keycode, decode};
@@ -35,6 +36,8 @@ type Leds = (u8, Vec<Vec<Option<u8>>>);
 
 #[derive(Default)]
 struct AppState {
+    /// What installing the bundled deltad did at start (released builds only).
+    install: Mutex<Option<Result<install::Sync, String>>>,
     keyboards: Mutex<HashMap<String, Open>>,
     /// Set to false to stop the running key watcher.
     watching: Mutex<Option<Arc<AtomicBool>>>,
@@ -352,12 +355,8 @@ async fn config() -> ConfigInfo {
                 problems: imported.warnings,
             }
         }
-        Err(_) => ConfigInfo {
-            config: None,
-            source,
-            legacy: false,
-            problems: vec!["no delta.toml yet; run `delta import`".into()],
-        },
+        // First run: start empty, the first save creates delta.toml
+        Err(_) => ConfigInfo { config: Some(Config::default()), source, legacy: false, problems: vec![] },
     }
 }
 
@@ -538,10 +537,85 @@ async fn deltad_status() -> Option<HashMap<String, String>> {
     reply.body().deserialize().ok()
 }
 
+/// Installation and permission state, for the setup banner and status line.
+#[derive(Serialize)]
+struct SetupState {
+    app_version: &'static str,
+    /// A `tauri dev` build: never installs anything.
+    dev: bool,
+    owner: Owner,
+    install: Option<install::Sync>,
+    install_error: Option<String>,
+    permissions: Permissions,
+    needs_setup: bool,
+    needs_relogin: bool,
+}
+
+#[tauri::command]
+async fn setup_state(state: State<'_, AppState>) -> Result<SetupState, String> {
+    let (installed, install_error) = match state.install.lock().unwrap().clone() {
+        Some(Ok(s)) => (Some(s), None),
+        Some(Err(e)) => (None, Some(e)),
+        None => (None, None),
+    };
+    let permissions = Permissions::check();
+    Ok(SetupState {
+        app_version: env!("CARGO_PKG_VERSION"),
+        dev: cfg!(debug_assertions),
+        owner: install::owner(&Paths::from_env()),
+        install: installed,
+        install_error,
+        needs_setup: permissions.needs_setup(),
+        needs_relogin: permissions.needs_relogin(),
+        permissions,
+    })
+}
+
+/// The one root step (polkit asks for a password): udev rules, uinput, `input` group.
+#[tauri::command]
+async fn run_setup() -> Result<(), String> {
+    let out = install::setup_command().output().map_err(|e| format!("couldn't run pkexec: {e}"))?;
+    match out.status.code() {
+        Some(0) => Ok(()),
+        // pkexec: dialog dismissed / not authorized
+        Some(126 | 127) => Err("cancelled".into()),
+        _ => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+    }
+}
+
+/// Released builds: install the bundled deltad/delta/xremap and the menu entry.
+fn install_bundled(app: &AppHandle) {
+    let paths = Paths::from_env();
+    let result = match install::bundled_dir() {
+        Some(dir) => install::sync(&paths, &dir).map_err(|e| e.to_string()),
+        None => Err("can't find the app's own directory".into()),
+    };
+    match &result {
+        Ok(s) => eprintln!("install: {s:?}"),
+        Err(e) => eprintln!("install failed: {e}"),
+    }
+    // $APPIMAGE: the AppImage file itself (the binary runs from a temporary mount)
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        let icon = include_bytes!("../icons/128x128.png");
+        if let Err(e) = install::write_menu_entry(&paths, std::path::Path::new(&appimage), icon) {
+            eprintln!("menu entry: {e}");
+        }
+    }
+    *app.state::<AppState>().install.lock().unwrap() = Some(result);
+    let _ = app.emit("setup-changed", ());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .setup(|app| {
+            if !cfg!(debug_assertions) {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || install_bundled(&handle));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             keyboards,
             watch_keys,
@@ -558,7 +632,9 @@ pub fn run() {
             devices_signature,
             keyboard_lighting,
             preview_lighting,
-            preview_effect
+            preview_effect,
+            setup_state,
+            run_setup
         ])
         .run(tauri::generate_context!())
         .expect("error while running Delta");

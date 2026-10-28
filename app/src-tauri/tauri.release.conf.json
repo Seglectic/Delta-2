@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm build && ../packaging/stage-sidecars.sh"
+  },
+  "bundle": {
+    "targets": ["appimage"],
+    "externalBin": ["binaries/deltad", "binaries/delta", "binaries/xremap"]
+  }
+}

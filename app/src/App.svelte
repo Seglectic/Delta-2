@@ -29,6 +29,7 @@
     KnobTurn,
     Mouse,
     Pressed,
+    SetupState,
     Shortcut,
   } from "./lib/types";
 
@@ -51,6 +52,8 @@
   let running = $state<AppChoice[]>([]);
   /** deltad's status map, or null when it isn't running. */
   let deltad = $state<Record<string, string> | null>(null);
+  let setup = $state<SetupState | null>(null);
+  let settingUp = $state(false);
   let configInfo = $state<ConfigInfo | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -464,6 +467,22 @@
     deltad = await invoke<Record<string, string> | null>("deltad_status");
   }
 
+  async function refreshSetup() {
+    setup = await invoke<SetupState>("setup_state").catch(() => null);
+  }
+
+  async function runSetup() {
+    settingUp = true;
+    try {
+      await invoke("run_setup");
+    } catch (e) {
+      if (e !== "cancelled") error = `Setup failed: ${e}`;
+    } finally {
+      settingUp = false;
+      await refreshSetup();
+    }
+  }
+
   async function openKeyboard(i: number) {
     tab = { kind: "keyboard", index: i };
     if (i !== current) {
@@ -547,6 +566,11 @@
         if (k) k.base_layer = e.payload.layer;
         viewLayer = null;
       }),
+      // The released app finished installing deltad
+      listen("setup-changed", () => {
+        refreshSetup();
+        refreshDeltad();
+      }),
       listen<string>("keyboard-error", (e) => {
         error = `Lost the keyboard: ${e.payload}`;
         pressed = new Set();
@@ -567,6 +591,7 @@
       ledState = await invoke<KeyboardLighting>("keyboard_lighting", { path: keyboard.path }).catch(() => null);
     }, 500);
     load();
+    refreshSetup();
     return () => {
       clearInterval(devicePoll);
       clearInterval(ledPoll);
@@ -625,6 +650,22 @@
       </nav>
     {/if}
   </header>
+
+  {#if setup?.needs_setup}
+    <div class="banner setup">
+      <span>
+        Delta needs permission to read your keyboards and send keys: a udev rule for
+        <code>/dev/uinput</code> and <code>/dev/hidraw*</code>, and your user in the <code>input</code> group.
+        This asks for your password once.
+      </span>
+      <button onclick={runSetup} disabled={settingUp}>{settingUp ? "Waiting…" : "Set up"}</button>
+    </div>
+  {:else if setup?.needs_relogin}
+    <p class="banner setup">Permissions are set up. Log out and back in so they apply to this session.</p>
+  {/if}
+  {#if setup?.install_error}
+    <p class="banner error">Couldn't install deltad: {setup.install_error}</p>
+  {/if}
 
   {#if error}
     <p class="banner error">{error}</p>
@@ -807,6 +848,13 @@
   {/if}
 
   <footer>
+    {#if setup}
+      <span title={setup.owner.kind === "other" ? `deltad.service runs ${setup.owner.exec}` : ""}>
+        Delta {setup.app_version}{setup.dev ? " (dev)" : ""}{deltad?.version && deltad.version !== setup.app_version
+          ? ` · deltad ${deltad.version}`
+          : ""}{setup.owner.kind === "other" ? " · deltad from a dev install" : ""}
+      </span>
+    {/if}
     {#if deltad}
       <span class:note={!!deltad.last_error}>
         deltad: {deltad.last_error || `applied · xremap ${deltad.xremap} · KWin script ${deltad.kwin_script}`}
@@ -994,6 +1042,12 @@
     padding: 10px 14px;
     border-radius: 10px;
     background: var(--surface0);
+  }
+  .banner.setup {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: color-mix(in srgb, var(--peach) 16%, var(--base));
   }
   .banner.error {
     background: color-mix(in srgb, var(--red) 18%, var(--base));

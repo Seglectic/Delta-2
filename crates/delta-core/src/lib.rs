@@ -5,6 +5,7 @@ pub mod apps;
 pub mod config;
 pub mod generate;
 pub mod import;
+pub mod install;
 pub mod launch;
 pub mod lighting;
 pub mod paths;

@@ -71,7 +71,7 @@ impl Delta {
         }
         self.seen = Some(mtime);
         if mtime.is_none() {
-            self.fail(format!("{} doesn't exist; run `delta import` to create it", self.paths.config.display()));
+            self.fail(format!("{} doesn't exist yet; add a binding in the Delta app", self.paths.config.display()));
             return true;
         }
         match Config::load(&self.paths.config) {
@@ -232,6 +232,7 @@ impl Delta {
             Err(e) => format!("unknown ({e})"),
         };
         HashMap::from([
+            ("version".into(), env!("CARGO_PKG_VERSION").into()),
             ("config_path".into(), self.paths.config.display().to_string()),
             ("bindings".into(), self.config.as_ref().map_or(0, |c| c.bindings.len()).to_string()),
             ("xremap".into(), system::xremap_state()),

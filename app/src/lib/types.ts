@@ -186,6 +186,22 @@ export interface ConfigInfo {
   problems: string[];
 }
 
+/** Who runs deltad: nobody yet, this app (from ~/.local/share/delta/bin), or something
+    else (a dev install from packaging/install.sh). */
+export type Owner = { kind: "nobody" } | { kind: "app" } | { kind: "other"; exec: string };
+
+export interface SetupState {
+  app_version: string;
+  /** `tauri dev` build: installs nothing. */
+  dev: boolean;
+  owner: Owner;
+  install: { kind: "skipped"; exec: string } | { kind: "done"; updated: string[]; restarted: boolean } | null;
+  install_error: string | null;
+  permissions: { input_session: boolean; input_configured: boolean; uinput: boolean; hidraw: boolean; rules: boolean };
+  needs_setup: boolean;
+  needs_relogin: boolean;
+}
+
 /** One physical mouse; `paths` are its input nodes (some devices have several). */
 export interface Mouse {
   name: string;

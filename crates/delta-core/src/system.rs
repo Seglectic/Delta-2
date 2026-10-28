@@ -33,7 +33,9 @@ pub struct Artifact {
 /// Everything `apply` would write. `launcher_exec` is the `delta` binary that
 /// `delta-launch@.service` runs as `<launcher_exec> launch %i`.
 pub fn render(config: &Config, paths: &Paths, launcher_exec: &Path) -> Vec<Artifact> {
-    let xremap_bin = find_in_path("xremap").unwrap_or_else(|| home().join(".local/bin/xremap"));
+    let xremap_bin = bundled_xremap()
+        .or_else(|| find_in_path("xremap"))
+        .unwrap_or_else(|| home().join(".local/bin/xremap"));
     let launch = format!("{} launch", launcher_exec.display());
     vec![
         Artifact {
@@ -212,7 +214,7 @@ pub fn xremap_state() -> String {
         .unwrap_or_else(|_| "unknown".into())
 }
 
-fn systemctl(args: &[&str]) -> Result<(), SystemError> {
+pub(crate) fn systemctl(args: &[&str]) -> Result<(), SystemError> {
     let cmd = format!("systemctl --user {}", args.join(" "));
     let out = Command::new("systemctl")
         .arg("--user")
@@ -233,6 +235,12 @@ fn check_input_group() -> Result<(), SystemError> {
         Ok(g) if g.split_whitespace().any(|g| g == "input") => Ok(()),
         _ => Err(SystemError::NotInInputGroup { user: std::env::var("USER").unwrap_or_else(|_| "you".into()) }),
     }
+}
+
+/// The xremap installed next to the running binary (the released app ships one).
+fn bundled_xremap() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    Some(exe.parent()?.join("xremap")).filter(|p| p.is_file())
 }
 
 fn home() -> PathBuf {
