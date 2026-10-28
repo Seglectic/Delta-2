@@ -4,7 +4,14 @@
     "beforeBuildCommand": "pnpm build && ../packaging/stage-sidecars.sh"
   },
   "bundle": {
-    "targets": ["appimage"],
-    "externalBin": ["binaries/deltad", "binaries/delta", "binaries/xremap"]
+    "targets": [
+      "appimage"
+    ],
+    "externalBin": [
+      "binaries/deltad",
+      "binaries/delta",
+      "binaries/xremap"
+    ],
+    "createUpdaterArtifacts": true
   }
 }

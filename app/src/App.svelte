@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import Keyboard from "./lib/Keyboard.svelte";
@@ -54,6 +56,9 @@
   let deltad = $state<Record<string, string> | null>(null);
   let setup = $state<SetupState | null>(null);
   let settingUp = $state(false);
+  /** A newer release on GitHub (released builds only). */
+  let update = $state<Update | null>(null);
+  let updating = $state<string | null>(null);
   let configInfo = $state<ConfigInfo | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -471,6 +476,36 @@
     setup = await invoke<SetupState>("setup_state").catch(() => null);
   }
 
+  async function checkForUpdate() {
+    if (!setup || setup.dev) return;
+    update = await check().catch((e) => {
+      console.warn("update check failed", e);
+      return null;
+    });
+  }
+
+  /** Swap in the new AppImage and restart; at start the new build replaces deltad. */
+  async function installUpdate() {
+    if (!update) return;
+    let total = 0;
+    let done = 0;
+    updating = "Downloading…";
+    try {
+      await update.downloadAndInstall((e) => {
+        if (e.event === "Started") total = e.data.contentLength ?? 0;
+        if (e.event === "Progress") {
+          done += e.data.chunkLength;
+          if (total) updating = `Downloading… ${Math.round((done / total) * 100)}%`;
+        }
+        if (e.event === "Finished") updating = "Restarting…";
+      });
+      await relaunch();
+    } catch (e) {
+      error = `Update failed: ${e}`;
+      updating = null;
+    }
+  }
+
   async function runSetup() {
     settingUp = true;
     try {
@@ -591,7 +626,7 @@
       ledState = await invoke<KeyboardLighting>("keyboard_lighting", { path: keyboard.path }).catch(() => null);
     }, 500);
     load();
-    refreshSetup();
+    refreshSetup().then(checkForUpdate);
     return () => {
       clearInterval(devicePoll);
       clearInterval(ledPoll);
@@ -662,6 +697,12 @@
     </div>
   {:else if setup?.needs_relogin}
     <p class="banner setup">Permissions are set up. Log out and back in so they apply to this session.</p>
+  {/if}
+  {#if update}
+    <div class="banner setup">
+      <span>Delta {update.version} is out (you have {update.currentVersion}).{update.body ? ` ${update.body}` : ""}</span>
+      <button onclick={installUpdate} disabled={!!updating}>{updating ?? "Update and restart"}</button>
+    </div>
   {/if}
   {#if setup?.install_error}
     <p class="banner error">Couldn't install deltad: {setup.install_error}</p>

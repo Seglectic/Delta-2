@@ -1,0 +1,63 @@
+# Tag vX.Y.Z → checks → AppImage + latest.json on a *draft* Release. Publishing the
+# draft is what makes installed copies offer the update (the updater reads
+# releases/latest, which skips drafts).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Oldest supported runner: the AppImage and the binaries it installs run on any
+    # distro with this glibc or newer
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+
+      - name: Tag matches the version
+        run: test "${GITHUB_REF_NAME#v}" = "$(packaging/bump-version.sh --print)"
+
+      - name: Checks
+        run: |
+          cargo clippy --workspace -- -D warnings
+          cargo test --workspace
+          (cd app && pnpm check)
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          projectPath: app
+          args: --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Delta ${{ github.ref_name }}
+          releaseBody: "Download the AppImage, make it executable and run it. Installed copies update themselves once this release is published."
+          releaseDraft: true
+          includeUpdaterJson: true

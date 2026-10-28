@@ -609,6 +609,8 @@ fn install_bundled(app: &AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if !cfg!(debug_assertions) {
                 let handle = app.handle().clone();

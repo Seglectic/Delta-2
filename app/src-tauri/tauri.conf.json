@@ -10,12 +10,38 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Delta", "width": 1400, "height": 820, "minWidth": 900, "minHeight": 560 }],
-    "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'" }
+    "windows": [
+      {
+        "title": "Delta",
+        "width": 1400,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 560
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"]
+    "targets": [
+      "deb",
+      "rpm"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4NTQ5NzlGNzFBQjk2MjEKUldRaGxxdHhuNWRVeUorbCtZSmtMK0d3aGtJZm9FY3htenFWc21JUXRXcVNBdnZIaG1GMEp6b2cK",
+      "endpoints": [
+        "https://github.com/Seglectic/Delta-2/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
