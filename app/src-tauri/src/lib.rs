@@ -304,7 +304,8 @@ fn watch_keys(app: AppHandle, state: State<'_, AppState>, path: String) {
                 let mut boards = state.keyboards.lock().unwrap();
                 let Some(open) = boards.get_mut(&path) else { break };
                 let (rows, cols) = (open.rows, open.cols);
-                let layer = tick.is_multiple_of(LAYER_EVERY).then(|| open.via.keychron_layers().ok().flatten()).flatten();
+                let layer =
+                    tick.is_multiple_of(LAYER_EVERY).then(|| open.via.keychron_layers().ok().flatten()).flatten();
                 (open.via.pressed(rows, cols), layer)
             };
             tick = tick.wrapping_add(1);
@@ -412,8 +413,13 @@ async fn keyboard_lighting(state: State<'_, AppState>, path: String) -> Result<K
         open.leds = Some(leds);
     }
     let l = open.via.lighting().map_err(err)?;
-    let mut out =
-        KeyboardLighting { effect: l.effect, brightness: l.brightness, all: None, keys: HashMap::new(), animated: false };
+    let mut out = KeyboardLighting {
+        effect: l.effect,
+        brightness: l.brightness,
+        all: None,
+        keys: HashMap::new(),
+        animated: false,
+    };
     match l.effect {
         0 => out.all = Some("#000000".into()),
         1 | 2 => out.all = Some(to_hex(Hsv { h: l.hue, s: l.sat, v: 255 }.to_rgb())),
@@ -586,9 +592,12 @@ async fn run_setup() -> Result<(), String> {
 /// Released builds: install the bundled deltad/delta/xremap and the menu entry.
 fn install_bundled(app: &AppHandle) {
     let paths = Paths::from_env();
-    let result = match install::bundled_dir() {
-        Some(dir) => install::sync(&paths, &dir).map_err(|e| e.to_string()),
-        None => Err("can't find the app's own directory".into()),
+    let xremap_gz = app.path().resolve("xremap.gz", tauri::path::BaseDirectory::Resource);
+    let result = match (install::bundled_dir(), xremap_gz) {
+        (Some(dir), Ok(xremap_gz)) => {
+            install::sync(&paths, &install::Bundle { dir, xremap_gz }).map_err(|e| e.to_string())
+        }
+        _ => Err("can't find the app's bundled files".into()),
     };
     match &result {
         Ok(s) => eprintln!("install: {s:?}"),

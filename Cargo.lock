@@ -697,6 +697,7 @@ dependencies = [
 name = "delta-core"
 version = "0.2.0"
 dependencies = [
+ "flate2",
  "serde",
  "shell-words",
  "thiserror 2.0.21",

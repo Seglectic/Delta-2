@@ -33,9 +33,8 @@ pub struct Artifact {
 /// Everything `apply` would write. `launcher_exec` is the `delta` binary that
 /// `delta-launch@.service` runs as `<launcher_exec> launch %i`.
 pub fn render(config: &Config, paths: &Paths, launcher_exec: &Path) -> Vec<Artifact> {
-    let xremap_bin = bundled_xremap()
-        .or_else(|| find_in_path("xremap"))
-        .unwrap_or_else(|| home().join(".local/bin/xremap"));
+    let xremap_bin =
+        bundled_xremap().or_else(|| find_in_path("xremap")).unwrap_or_else(|| home().join(".local/bin/xremap"));
     let launch = format!("{} launch", launcher_exec.display());
     vec![
         Artifact {

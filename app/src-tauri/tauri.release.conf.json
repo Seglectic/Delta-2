@@ -9,9 +9,11 @@
     ],
     "externalBin": [
       "binaries/deltad",
-      "binaries/delta",
-      "binaries/xremap"
+      "binaries/delta"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "binaries/xremap.gz": "xremap.gz"
+    }
   }
 }

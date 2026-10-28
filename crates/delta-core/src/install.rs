@@ -1,5 +1,6 @@
 //! The released app installs itself: it copies the deltad, delta and xremap it ships
-//! with out of the AppImage, points deltad.service at them, and checks the permissions
+//! with out of the AppImage (xremap gzipped: linuxdeploy patches every ELF in the
+//! AppImage, which corrupts xremap's static binary), points deltad.service at them, and checks the permissions
 //! they need. A deltad.service written by `packaging/install.sh` (a dev build) is left
 //! alone.
 
@@ -10,8 +11,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Programs the app bundles, copied to `Paths::bin_dir`.
-pub const BINARIES: [&str; 3] = ["deltad", "delta", "xremap"];
+/// Programs the app bundles next to itself, copied to `Paths::bin_dir`.
+pub const BINARIES: [&str; 2] = ["deltad", "delta"];
+
+/// Where the app's bundled programs are.
+pub struct Bundle {
+    /// The app's own directory: deltad and delta.
+    pub dir: PathBuf,
+    /// xremap, gzipped (a Tauri resource).
+    pub xremap_gz: PathBuf,
+}
 
 const UNIT_TEMPLATE: &str = include_str!("../../../packaging/deltad.service");
 
@@ -58,6 +67,8 @@ pub fn unit(paths: &Paths) -> String {
 pub enum InstallError {
     #[error("{0} isn't bundled with the app")]
     Missing(String),
+    #[error("the bundled xremap doesn't run ({0}); kept the installed one")]
+    BrokenXremap(String),
     #[error("installing {path}: {source}")]
     Io { path: String, source: std::io::Error },
     #[error(transparent)]
@@ -74,21 +85,25 @@ pub enum Sync {
     Done { updated: Vec<String>, restarted: bool },
 }
 
-/// Install the programs in `from` (the app's own directory) into `bin_dir` where they
-/// differ, write deltad.service and the `delta` link, and (re)start deltad if anything
-/// changed or it isn't running.
-pub fn sync(paths: &Paths, from: &Path) -> Result<Sync, InstallError> {
+/// Install the bundled programs into `bin_dir` where they differ, write deltad.service
+/// and the `delta` link, and (re)start deltad if anything changed or it isn't running.
+pub fn sync(paths: &Paths, bundle: &Bundle) -> Result<Sync, InstallError> {
     if let Owner::Other(exec) = owner(paths) {
         return Ok(Sync::Skipped { exec });
     }
     let mut updated = Vec::new();
     for name in BINARIES {
-        let src = from.join(name);
-        let bytes = std::fs::read(&src).map_err(|_| InstallError::Missing(name.into()))?;
-        let dst = paths.bin_dir.join(name);
-        if write_if_changed(&dst, &bytes, 0o755)? {
+        let bytes = std::fs::read(bundle.dir.join(name)).map_err(|_| InstallError::Missing(name.into()))?;
+        if write_if_changed(&paths.bin_dir.join(name), &bytes, 0o755)? {
             updated.push(name.to_string());
         }
+    }
+    let xremap = gunzip(&bundle.xremap_gz).map_err(|_| InstallError::Missing("xremap".into()))?;
+    let dst = paths.bin_dir.join("xremap");
+    if !std::fs::read(&dst).is_ok_and(|old| old == xremap) {
+        check_xremap(paths, &xremap)?;
+        write_if_changed(&dst, &xremap, 0o755)?;
+        updated.push("xremap".into());
     }
     let unit_changed = write_if_changed(&paths.deltad_unit, unit(paths).as_bytes(), 0o644)?;
     if unit_changed {
@@ -114,6 +129,25 @@ pub fn sync(paths: &Paths, from: &Path) -> Result<Sync, InstallError> {
         }
     }
     Ok(Sync::Done { updated, restarted: restart })
+}
+
+fn gunzip(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(std::fs::File::open(path)?), &mut out)?;
+    Ok(out)
+}
+
+/// A new xremap must run `--version` before it replaces the one keeping hotkeys alive.
+fn check_xremap(paths: &Paths, bytes: &[u8]) -> Result<(), InstallError> {
+    let probe = paths.bin_dir.join(".xremap.check");
+    write_if_changed(&probe, bytes, 0o755)?;
+    let ran = Command::new(&probe).arg("--version").output();
+    let _ = std::fs::remove_file(&probe);
+    match ran {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(InstallError::BrokenXremap(o.status.to_string())),
+        Err(e) => Err(InstallError::BrokenXremap(e.to_string())),
+    }
 }
 
 /// Writes `bytes` to `path` (via a temp file, so a running binary can be replaced)
@@ -244,7 +278,7 @@ pub fn setup_command() -> Command {
     cmd
 }
 
-/// The app's own directory, where Tauri puts the bundled programs.
+/// The app's own directory, where Tauri puts deltad and delta.
 pub fn bundled_dir() -> Option<PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.to_path_buf())
 }

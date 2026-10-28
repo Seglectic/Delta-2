@@ -1,6 +1,7 @@
 #!/bin/bash
-# Put the programs the released app installs (deltad, delta, xremap) where Tauri's
-# externalBin expects them: app/src-tauri/binaries/<name>-<target triple>.
+# Put the programs the released app installs where Tauri expects them: deltad and delta
+# as externalBin (app/src-tauri/binaries/<name>-<target triple>), xremap as the
+# resource app/src-tauri/binaries/xremap.gz.
 # Run by `tauri build --config src-tauri/tauri.release.conf.json`.
 set -euo pipefail
 
@@ -34,6 +35,8 @@ if [[ ! -f "$zip" ]]; then
     mv "$zip.part" "$zip"
 fi
 echo "$xremap_sha256  $zip" | sha256sum -c --quiet
-unzip -p "$zip" xremap > "$out/xremap-$triple"
-chmod 755 "$out/xremap-$triple"
+# Gzipped, as a resource: linuxdeploy patches every ELF it finds in the AppImage, and
+# patching xremap's static binary makes it segfault
+rm -f "$out/xremap-$triple"
+unzip -p "$zip" xremap | gzip -9n > "$out/xremap.gz"
 echo "==> Staged in $out"
