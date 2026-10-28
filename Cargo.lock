@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "delta-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "delta-core",
  "delta-input",
@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "delta-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "delta-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "shell-words",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "delta-input"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "evdev",
  "serde",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "delta-via"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "deltad"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "delta-core",
