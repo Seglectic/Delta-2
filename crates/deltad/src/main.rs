@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::oneshot;
 use zbus::object_server::SignalEmitter;
 
+mod effects;
 mod highlight;
 use zbus::{fdo, interface};
 
@@ -23,6 +24,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const KWIN_WAIT: Duration = Duration::from_secs(60);
 /// Name of the one-shot KWin script that lists open windows.
 const LIST_WINDOWS: &str = "delta-list-windows";
+/// One-shot KWin script that reports the focused window, for when deltad starts after
+/// the main script (which reports every focus change).
+const REPORT_FOCUS: &str = "delta-report-focus";
+const REPORT_FOCUS_SCRIPT: &str = r#"var w = workspace.activeWindow;
+callDBus("org.seglectic.Delta", "/org/seglectic/Delta", "org.seglectic.Delta1", "FocusChanged",
+         w ? "" + (w.resourceClass || "") : "", w ? "" + (w.desktopFileName || "") : "");
+"#;
 
 struct Delta {
     paths: Paths,
@@ -184,6 +192,38 @@ impl Delta {
         }
     }
 
+    /// Called by the KWin script whenever another window gets focus.
+    fn focus_changed(&self, class: String, desktop: String) {
+        *self.shared.focus.lock().unwrap() = Some((class, desktop));
+    }
+
+    /// Show a lighting profile (JSON, as in `[[lighting.profiles]]`) on the keyboard
+    /// instead of the focused app's, for a few seconds; send it again to keep it up.
+    /// An empty string ends the preview.
+    fn preview_lighting(&self, json: String) -> fdo::Result<()> {
+        let mut preview = self.shared.preview.lock().unwrap();
+        if json.is_empty() {
+            *preview = None;
+            return Ok(());
+        }
+        let profile = serde_json::from_str(&json).map_err(|e| fdo::Error::InvalidArgs(e.to_string()))?;
+        *preview = Some((profile, std::time::Instant::now()));
+        Ok(())
+    }
+
+    /// Play a lighting effect (JSON, as in `[[lighting.effects]]`) on a loop for a few
+    /// seconds; send it again to keep it going. An empty string stops it.
+    fn preview_effect(&self, json: String) -> fdo::Result<()> {
+        let mut preview = self.shared.preview_effect.lock().unwrap();
+        if json.is_empty() {
+            *preview = None;
+            return Ok(());
+        }
+        let effect = serde_json::from_str(&json).map_err(|e| fdo::Error::InvalidArgs(e.to_string()))?;
+        *preview = Some((effect, std::time::Instant::now()));
+        Ok(())
+    }
+
     /// Component states, for status displays.
     async fn status(&self) -> HashMap<String, String> {
         let kwin = match system::kwin_script_loaded().await {
@@ -197,12 +237,29 @@ impl Delta {
             ("xremap".into(), system::xremap_state()),
             ("kwin_script".into(), kwin),
             ("last_error".into(), self.last_error.clone().unwrap_or_default()),
+            (
+                "focus".into(),
+                self.shared.focus.lock().unwrap().as_ref().map(|(c, d)| format!("{c} ({d})")).unwrap_or_default(),
+            ),
         ])
     }
 
     /// The config was changed (by the GUI or by editing the file).
     #[zbus(signal)]
     async fn config_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+}
+
+/// Have KWin call `FocusChanged` once with the window focused now.
+async fn report_focus() -> Result<()> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("delta");
+    let script = dir.join("report-focus.js");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(&script, REPORT_FOCUS_SCRIPT)?;
+    system::run_kwin_script(&script, REPORT_FOCUS).await?;
+    // The script answers right away; the bus call above is handled while we wait
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let _ = system::unload_kwin_script(REPORT_FOCUS).await;
+    Ok(())
 }
 
 /// The KWin script can only be loaded once KWin is on the bus.
@@ -232,6 +289,9 @@ async fn main() -> Result<()> {
     eprintln!("deltad serving {BUS_NAME}");
 
     wait_for_kwin(&conn).await;
+    if let Err(e) = report_focus().await {
+        eprintln!("couldn't ask KWin for the focused window: {e}");
+    }
 
     // Poll the config's mtime. Simple, and survives editors that replace the file.
     let mut tick = tokio::time::interval(POLL_INTERVAL);

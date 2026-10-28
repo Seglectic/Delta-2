@@ -65,15 +65,19 @@ pub fn info(paths: &Paths) -> Result<()> {
         return Ok(());
     };
     println!("Keychron firmware: {}", via.keychron_firmware_version()?);
-    let (base, active) = via.keychron_layers()?;
-    println!("Layers:           base {base}, active {active}");
-    let (effect, brightness) = via.lighting()?;
-    println!("Lighting:         effect {effect}, brightness {brightness}");
+    match via.keychron_layers()? {
+        Some((base, active)) => println!("Layers:           base {base}, active {active}"),
+        None => println!("Layers:           the firmware doesn't report them"),
+    }
+    let l = via.lighting()?;
+    println!("Lighting:         effect {}, brightness {}, hue {}, sat {}", l.effect, l.brightness, l.hue, l.sat);
     let map = via.led_map(def.rows, def.cols)?;
     let mapped = map.iter().flatten().flatten().count();
     println!("Per-key RGB:      {leds} LEDs, {mapped} mapped to matrix positions");
-    let row0: Vec<String> = map[0].iter().map(|l| l.map_or("-".into(), |i| i.to_string())).collect();
-    println!("  row 0 LEDs:     {}", row0.join(" "));
+    for (r, row) in map.iter().enumerate() {
+        let leds: Vec<String> = row.iter().map(|l| l.map_or("-".into(), |i| i.to_string())).collect();
+        println!("  row {r} LEDs:     {}", leds.join(" "));
+    }
     Ok(())
 }
 

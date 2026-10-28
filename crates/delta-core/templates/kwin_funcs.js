@@ -360,3 +360,11 @@ workspace.windowAdded.connect(function(window) {
     }
 });
 
+// Tell deltad which window has focus, for per-app lighting
+function reportFocus(w) {
+    callDBus("org.seglectic.Delta", "/org/seglectic/Delta", "org.seglectic.Delta1", "FocusChanged",
+             w ? "" + (w.resourceClass || "") : "", w ? "" + (w.desktopFileName || "") : "");
+}
+workspace.windowActivated.connect(reportFocus);
+reportFocus(workspace.activeWindow);
+

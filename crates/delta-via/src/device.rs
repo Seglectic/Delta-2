@@ -6,7 +6,7 @@
 
 use crate::protocol::{
     CHANNEL_RGB_MATRIX, Hsv, KeyboardValue, LightingCommand, MAX_BUFFER_CHUNK, MAX_COLORS_PER_WRITE, REPORT_LEN,
-    ReadCommand, UNHANDLED, VALUE_BRIGHTNESS, VALUE_EFFECT, is_ram_only_write, is_read_only,
+    ReadCommand, UNHANDLED, VALUE_BRIGHTNESS, VALUE_COLOR, VALUE_EFFECT, is_ram_only_write, is_read_only,
 };
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -75,6 +75,15 @@ fn parse_hid_id(uevent: &str) -> Option<(u16, u16)> {
     let vid = u32::from_str_radix(parts.next()?, 16).ok()?;
     let pid = u32::from_str_radix(parts.next()?, 16).ok()?;
     Some((vid as u16, pid as u16))
+}
+
+/// RGB matrix settings as the keyboard has them in RAM; effect 0 means off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightingState {
+    pub effect: u8,
+    pub brightness: u8,
+    pub hue: u8,
+    pub sat: u8,
 }
 
 /// An open connection to one keyboard's VIA interface.
@@ -233,9 +242,13 @@ impl Via {
 
     /// Keychron firmware: the base layer in use (Mac/Windows switch) and the highest
     /// active layer right now.
-    pub fn keychron_layers(&mut self) -> Result<(u8, u8), ViaError> {
-        let r = self.request(ReadCommand::KeychronDefaultLayer)?;
-        Ok((r[1], r[2]))
+    /// None when the firmware doesn't answer it (older or non-Keychron firmware).
+    pub fn keychron_layers(&mut self) -> Result<Option<(u8, u8)>, ViaError> {
+        match self.request(ReadCommand::KeychronDefaultLayer) {
+            Ok(r) => Ok(Some((r[1], r[2]))),
+            Err(ViaError::Unsupported { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// LED index of each matrix position (`[row][col]`), None where there's no LED.
@@ -248,21 +261,64 @@ impl Via {
             .collect()
     }
 
-    /// RGB matrix `(effect, brightness)`; effect 0 means the lights are off.
-    pub fn lighting(&mut self) -> Result<(u8, u8), ViaError> {
-        let get = |via: &mut Self, value| -> Result<u8, ViaError> {
-            Ok(via.request(ReadCommand::LightingValue { channel: CHANNEL_RGB_MATRIX, value })?[3])
+    /// The RGB matrix's current effect, brightness and colour.
+    pub fn lighting(&mut self) -> Result<LightingState, ViaError> {
+        let mut get = |value| self.request(ReadCommand::LightingValue { channel: CHANNEL_RGB_MATRIX, value });
+        let effect = get(VALUE_EFFECT)?[3];
+        let brightness = get(VALUE_BRIGHTNESS)?[3];
+        let color = get(VALUE_COLOR)?;
+        Ok(LightingState { effect, brightness, hue: color[3], sat: color[4] })
+    }
+
+    /// Keychron lock indicators: `(turned off, colour)`, bit 0 Num Lock, 1 Caps Lock, …
+    /// None when the firmware doesn't have them.
+    pub fn indicators(&mut self) -> Result<Option<(u8, Hsv)>, ViaError> {
+        let r = match self.request(ReadCommand::KeychronIndicators) {
+            Ok(r) => r,
+            Err(ViaError::Unsupported { .. }) => return Ok(None),
+            Err(e) => return Err(e),
         };
-        Ok((get(self, VALUE_EFFECT)?, get(self, VALUE_BRIGHTNESS)?))
+        Ok((r[2] == 0).then(|| (r[4], Hsv { h: r[5], s: r[6], v: r[7] })))
+    }
+
+    /// The per-key colour buffer, as `set_per_key_colors` (or Keychron's app) left it.
+    pub fn per_key_colors(&mut self, led_count: u8) -> Result<Vec<Hsv>, ViaError> {
+        let mut out = Vec::with_capacity(led_count as usize);
+        for start in (0..led_count).step_by(MAX_COLORS_PER_WRITE) {
+            // The firmware doesn't bounds-check reads either
+            let count = (led_count - start).min(MAX_COLORS_PER_WRITE as u8);
+            let r = self.request(ReadCommand::KeychronPerKeyColors { start, count })?;
+            if r[2] != 0 {
+                return Err(ViaError::Rejected { path: self.path.clone(), command: "KeychronPerKeyColors".into() });
+            }
+            out.extend((0..count as usize).map(|i| Hsv { h: r[3 + i * 3], s: r[4 + i * 3], v: r[5 + i * 3] }));
+        }
+        Ok(out)
     }
 
     /// Replace the per-key colours (RAM only), 9 LEDs per write. `colors` must cover
     /// exactly `led_count` LEDs: Keychron's firmware doesn't bounds-check writes.
     pub fn set_per_key_colors(&mut self, colors: &[Hsv], led_count: u8) -> Result<(), ViaError> {
+        self.set_per_key_colors_since(colors, None, led_count)
+    }
+
+    /// Like `set_per_key_colors`, but skips the writes whose LEDs are the same as in
+    /// `previous` (what was sent last), for animation frames.
+    pub fn set_per_key_colors_since(
+        &mut self,
+        colors: &[Hsv],
+        previous: Option<&[Hsv]>,
+        led_count: u8,
+    ) -> Result<(), ViaError> {
         if colors.len() != led_count as usize {
             return Err(ViaError::Invalid(format!("{} colours for {led_count} LEDs", colors.len())));
         }
+        let previous = previous.filter(|p| p.len() == colors.len());
         for (i, chunk) in colors.chunks(MAX_COLORS_PER_WRITE).enumerate() {
+            let at = i * MAX_COLORS_PER_WRITE;
+            if previous.is_some_and(|p| p[at..at + chunk.len()] == *chunk) {
+                continue;
+            }
             let mut buf = [Hsv::default(); MAX_COLORS_PER_WRITE];
             buf[..chunk.len()].copy_from_slice(chunk);
             let start = (i * MAX_COLORS_PER_WRITE) as u8;

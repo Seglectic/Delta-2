@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Binding, Definition, Keycode, PhysicalKey } from "./types";
+  import type { Binding, DeltaColors, Definition, Keycode, PhysicalKey } from "./types";
   import { bindingsFor, isDeltaLayer, keyId, qmkName, shortAction } from "./bindings";
 
   interface Props {
@@ -12,6 +12,10 @@
     modifierKey: string;
     /** Show what keys do while the delta modifier is held. */
     deltaView: boolean;
+    /** LED colours while the delta key is held, drawn on the caps in the delta view. */
+    deltaColors: DeltaColors | null;
+    /** "row,col" → what the LED shows, outside the delta view. */
+    leds: Record<string, string> | null;
     pressed: Set<string>;
     /** Knobs turning right now: encoder → direction. */
     turning: Record<number, "left" | "right">;
@@ -19,8 +23,20 @@
     onselect: (id: string) => void;
   }
 
-  let { definition, layer, baseLayer, bindings, modifierKey, deltaView, pressed, turning, selected, onselect }: Props =
-    $props();
+  let {
+    definition,
+    layer,
+    baseLayer,
+    bindings,
+    modifierKey,
+    deltaView,
+    deltaColors,
+    leds,
+    pressed,
+    turning,
+    selected,
+    onselect,
+  }: Props = $props();
 
   /** Pixels per key unit, and the gap around each cap. */
   const U = 60;
@@ -50,6 +66,13 @@
         dim: !action && !isModifier,
         isModifier,
         perApp: false,
+        led: !deltaColors
+          ? undefined
+          : isModifier
+            ? deltaColors.delta_key
+            : action
+              ? deltaColors.bindings[action.id]
+              : deltaColors.background,
       };
     }
     const base = own.filter((b) => !isDeltaLayer(b));
@@ -60,7 +83,15 @@
       dim: inherited,
       isModifier,
       perApp: base.length > 0 && base.every((b) => b.only_in),
+      led: leds?.[`${k.row},${k.col}`] as string | undefined,
     };
+  }
+
+  /** Light LEDs need dark text on the cap. */
+  function bright(hex: string | undefined): boolean {
+    if (!hex) return false;
+    const n = parseInt(hex.slice(1), 16);
+    return 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) > 150;
   }
 </script>
 
@@ -72,6 +103,10 @@
     {@const turn = k.encoder !== null ? turning[k.encoder] : undefined}
     <g
       class="key {k.color ?? 'alpha'}"
+      class:lit={!!c.led}
+      class:bright={bright(c.led)}
+      class:delta-view={deltaView}
+      style:--led={c.led}
       class:pressed={isPressed}
       class:turning={!!turn}
       class:selected={selected === id}
@@ -188,6 +223,22 @@
   .turning .turn {
     font-size: 22px;
     font-weight: 700;
+  }
+  /* The cap in the colour its LED shows (black = off) */
+  .lit .cap {
+    fill: color-mix(in srgb, var(--led) 55%, var(--key-alpha));
+  }
+  .lit:not(.modifier) .main,
+  .lit:not(.modifier) .sub {
+    fill: var(--text);
+  }
+  .lit.bright:not(.modifier) .main,
+  .lit.bright:not(.modifier) .sub {
+    fill: var(--crust);
+  }
+  .lit.delta-view.active .cap {
+    stroke: var(--led);
+    stroke-width: 2;
   }
   .pressed .cap {
     fill: var(--blue);

@@ -46,10 +46,13 @@ mod id {
 /// Keychron RGB subcommands (`keyboards/keychron/common/rgb/keychron_rgb.c`).
 mod rgb {
     pub const GET_PROTOCOL_VER: u8 = 0x01;
+    pub const GET_INDICATORS: u8 = 0x03;
+    pub const SET_INDICATORS: u8 = 0x04;
     pub const GET_LED_COUNT: u8 = 0x05;
     pub const GET_LED_IDX: u8 = 0x06;
     pub const PER_KEY_GET_TYPE: u8 = 0x07;
     pub const PER_KEY_SET_TYPE: u8 = 0x08;
+    pub const PER_KEY_GET_COLOR: u8 = 0x09;
     pub const PER_KEY_SET_COLOR: u8 = 0x0A;
 }
 
@@ -76,7 +79,15 @@ pub fn is_read_only(p: &[u8]) -> bool {
         | id::KC_GET_DEFAULT_LAYER => true,
         id::GET_KEYBOARD_VALUE => matches!(p[1], 0x01..=0x04),
         id::KC_KEYCHRON_RGB => {
-            matches!(p[1], rgb::GET_PROTOCOL_VER | rgb::GET_LED_COUNT | rgb::GET_LED_IDX | rgb::PER_KEY_GET_TYPE)
+            matches!(
+                p[1],
+                rgb::GET_PROTOCOL_VER
+                    | rgb::GET_INDICATORS
+                    | rgb::GET_LED_COUNT
+                    | rgb::GET_LED_IDX
+                    | rgb::PER_KEY_GET_TYPE
+                    | rgb::PER_KEY_GET_COLOR
+            )
         }
         _ => false,
     }
@@ -89,8 +100,9 @@ pub fn is_ram_only_write(p: &[u8]) -> bool {
         id::CUSTOM_SET_VALUE => {
             p[1] == CHANNEL_RGB_MATRIX && matches!(p[2], VALUE_BRIGHTNESS | VALUE_EFFECT | VALUE_COLOR)
         }
-        // Keychron keeps per-key type and colours in RAM until RGB_SAVE (0x02)
-        id::KC_KEYCHRON_RGB => matches!(p[1], rgb::PER_KEY_SET_TYPE | rgb::PER_KEY_SET_COLOR),
+        // Keychron keeps indicator settings, per-key type and colours in RAM until
+        // RGB_SAVE (0x02)
+        id::KC_KEYCHRON_RGB => matches!(p[1], rgb::SET_INDICATORS | rgb::PER_KEY_SET_TYPE | rgb::PER_KEY_SET_COLOR),
         _ => false,
     }
 }
@@ -153,6 +165,9 @@ pub enum ReadCommand {
     KeychronDefaultLayer,
     /// Keychron per-key RGB: protocol version.
     KeychronRgbProtocol,
+    /// Keychron lock indicators: reply byte 3 is which ones the board has, 4 which
+    /// are turned off (bit 0 Num Lock, 1 Caps Lock, …), 5–7 their HSV colour.
+    KeychronIndicators,
     /// Keychron per-key RGB: number of LEDs.
     KeychronLedCount,
     /// Keychron per-key RGB: LED index for each column of a matrix row.
@@ -161,6 +176,12 @@ pub enum ReadCommand {
     },
     /// Keychron per-key RGB: current per-key mode (solid, breathing, …).
     KeychronPerKeyType,
+    /// Keychron per-key colours of `count` LEDs from `start` (at most 9). The reply
+    /// has a status in byte 2 and H, S, V triples from byte 3.
+    KeychronPerKeyColors {
+        start: u8,
+        count: u8,
+    },
 }
 
 impl ReadCommand {
@@ -193,12 +214,19 @@ impl ReadCommand {
             ReadCommand::KeychronFirmwareVersion => put(&[id::KC_GET_FIRMWARE_VERSION]),
             ReadCommand::KeychronDefaultLayer => put(&[id::KC_GET_DEFAULT_LAYER]),
             ReadCommand::KeychronRgbProtocol => put(&[id::KC_KEYCHRON_RGB, rgb::GET_PROTOCOL_VER]),
+            ReadCommand::KeychronIndicators => put(&[id::KC_KEYCHRON_RGB, rgb::GET_INDICATORS]),
             ReadCommand::KeychronLedCount => put(&[id::KC_KEYCHRON_RGB, rgb::GET_LED_COUNT]),
             // Ask about every column: the 3-byte little-endian column mask is all ones
             ReadCommand::KeychronLedIndex { row } => {
                 put(&[id::KC_KEYCHRON_RGB, rgb::GET_LED_IDX, row, 0xFF, 0xFF, 0xFF])
             }
             ReadCommand::KeychronPerKeyType => put(&[id::KC_KEYCHRON_RGB, rgb::PER_KEY_GET_TYPE]),
+            ReadCommand::KeychronPerKeyColors { start, count } => put(&[
+                id::KC_KEYCHRON_RGB,
+                rgb::PER_KEY_GET_COLOR,
+                start,
+                count.min(MAX_COLORS_PER_WRITE as u8),
+            ]),
         }
         r
     }
@@ -225,6 +253,30 @@ pub struct Hsv {
     pub v: u8,
 }
 
+impl Hsv {
+    /// The RGB the LED is driven with, by QMK's own conversion (`hsv_to_rgb`).
+    pub fn to_rgb(self) -> (u8, u8, u8) {
+        let (h, s, v) = (self.h as u16, self.s as u16, self.v as u16);
+        if s == 0 {
+            return (self.v, self.v, self.v);
+        }
+        let region = h / 43;
+        let rem = (h - region * 43) * 6;
+        let p = (v * (255 - s)) >> 8;
+        let q = (v * (255 - ((s * rem) >> 8))) >> 8;
+        let t = (v * (255 - ((s * (255 - rem)) >> 8))) >> 8;
+        let (r, g, b) = match region {
+            0 => (v, t, p),
+            1 => (q, v, p),
+            2 => (p, v, t),
+            3 => (p, q, v),
+            4 => (t, p, v),
+            _ => (v, p, q),
+        };
+        (r as u8, g as u8, b as u8)
+    }
+}
+
 /// Lighting changes that only live in the keyboard's RAM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LightingCommand {
@@ -234,6 +286,9 @@ pub enum LightingCommand {
     Effect(u8),
     /// RGB matrix hue and saturation (QMK `rgb_matrix_sethsv_noeeprom`).
     Color { h: u8, s: u8 },
+    /// Keychron lock indicators: which are turned off (bit 0 Num Lock, 1 Caps Lock,
+    /// …) and their colour. The firmware keeps the brightness at 128 or more.
+    Indicators { disabled: u8, color: Hsv },
     /// Keychron per-key mode: 0 solid, 1 breathing, 2–4 reactive.
     PerKeyType(u8),
     /// Keychron per-key colours for `count` LEDs from `start` (at most 9 per write).
@@ -244,15 +299,28 @@ impl LightingCommand {
     pub fn encode(&self) -> [u8; REPORT_LEN] {
         let mut r = [0u8; REPORT_LEN];
         match *self {
-            LightingCommand::Brightness(v) => {
-                r[..4].copy_from_slice(&[id::CUSTOM_SET_VALUE, CHANNEL_RGB_MATRIX, VALUE_BRIGHTNESS, v])
-            }
+            // QMK stores scale8(v, 255) = v*255 >> 8, one less than sent, while reads
+            // report the stored value as is. Send one more so the value round-trips.
+            LightingCommand::Brightness(v) => r[..4].copy_from_slice(&[
+                id::CUSTOM_SET_VALUE,
+                CHANNEL_RGB_MATRIX,
+                VALUE_BRIGHTNESS,
+                if v == 0 { 0 } else { v.saturating_add(1) },
+            ]),
             LightingCommand::Effect(e) => {
                 r[..4].copy_from_slice(&[id::CUSTOM_SET_VALUE, CHANNEL_RGB_MATRIX, VALUE_EFFECT, e])
             }
             LightingCommand::Color { h, s } => {
                 r[..5].copy_from_slice(&[id::CUSTOM_SET_VALUE, CHANNEL_RGB_MATRIX, VALUE_COLOR, h, s])
             }
+            LightingCommand::Indicators { disabled, color } => r[..6].copy_from_slice(&[
+                id::KC_KEYCHRON_RGB,
+                rgb::SET_INDICATORS,
+                disabled,
+                color.h,
+                color.s,
+                color.v,
+            ]),
             LightingCommand::PerKeyType(t) => r[..3].copy_from_slice(&[id::KC_KEYCHRON_RGB, rgb::PER_KEY_SET_TYPE, t]),
             LightingCommand::PerKeyColors { start, count, colors } => {
                 let count = count.min(MAX_COLORS_PER_WRITE as u8);
@@ -273,6 +341,22 @@ impl LightingCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brightness_round_trips_through_scale8() {
+        let stored = |v: u8| ((LightingCommand::Brightness(v).encode()[3] as u16 * 255) >> 8) as u8;
+        assert_eq!(stored(180), 180);
+        assert_eq!(stored(1), 1);
+        assert_eq!(stored(0), 0);
+        assert_eq!(stored(254), 254);
+    }
+
+    #[test]
+    fn hsv_to_rgb_like_qmk() {
+        assert_eq!(Hsv { h: 0, s: 255, v: 255 }.to_rgb(), (255, 0, 0));
+        assert_eq!(Hsv { h: 0, s: 0, v: 200 }.to_rgb(), (200, 200, 200));
+        assert_eq!(Hsv { h: 170, s: 255, v: 255 }.to_rgb().2, 255);
+    }
 
     /// One of every read shape, including edge values.
     fn every_read() -> Vec<ReadCommand> {
@@ -295,9 +379,11 @@ mod tests {
             ReadCommand::KeychronFirmwareVersion,
             ReadCommand::KeychronDefaultLayer,
             ReadCommand::KeychronRgbProtocol,
+            ReadCommand::KeychronIndicators,
             ReadCommand::KeychronLedCount,
             ReadCommand::KeychronLedIndex { row: 5 },
             ReadCommand::KeychronPerKeyType,
+            ReadCommand::KeychronPerKeyColors { start: 88, count: 9 },
         ]
     }
 
@@ -306,6 +392,7 @@ mod tests {
             LightingCommand::Brightness(255),
             LightingCommand::Effect(0),
             LightingCommand::Color { h: 170, s: 255 },
+            LightingCommand::Indicators { disabled: 0x01, color: Hsv { h: 0, s: 0, v: 255 } },
             LightingCommand::PerKeyType(0),
             LightingCommand::PerKeyColors { start: 88, count: 9, colors: [Hsv { h: 1, s: 2, v: 3 }; 9] },
         ]
@@ -325,7 +412,6 @@ mod tests {
         &[0x13],       // keymap set buffer
         &[0x15],       // set encoder
         &[0xA8, 0x02], // Keychron RGB save
-        &[0xA8, 0x04], // Keychron set indicator config
         &[0xA8, 0x0D], // Keychron set mixed regions
         &[0xA8, 0x0F], // Keychron set mixed effect list
         &[0xAA],       // Keychron wireless DFU

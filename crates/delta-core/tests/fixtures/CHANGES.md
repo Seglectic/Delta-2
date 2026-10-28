@@ -17,3 +17,7 @@ These differences are on purpose:
   duplicate block when an app's entries weren't adjacent).
 
 xremap config, xremap service and launcher unit are still byte-identical to legacy.
+
+**Focus reporting**
+- `main.js` ends its helper section with `reportFocus`: it calls deltad's `FocusChanged`
+  with the active window's class and desktop file, for per-app lighting.

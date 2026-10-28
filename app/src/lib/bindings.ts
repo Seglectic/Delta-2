@@ -138,3 +138,11 @@ export function whenText(b: Binding, modifierKey: string): string {
 export function modifierLabel(modifierKey: string): string {
   return modifierKey.toLowerCase() === "capslock" ? "Caps Lock" : `Caps (${modifierKey.toUpperCase()})`;
 }
+
+/** A profile key's colour with its brightness applied, as the LED shows it. */
+export function keyLightColor(k: { color: string; brightness: number }): string {
+  const n = parseInt(k.color.slice(1), 16);
+  const scale = (c: number) => Math.round((c * k.brightness) / 255);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(scale);
+  return "#" + [r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("").toUpperCase();
+}

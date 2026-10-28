@@ -164,6 +164,7 @@ pub fn running_apps(windows: &[Window]) -> Vec<AppChoice> {
             .or_else(|| flatpak.as_deref().and_then(find_desktop));
         let app = match &entry {
             Some(d) => choice(d, &w.class, Some(&w.caption)),
+            None if steam_app_id(&w.class).is_some() => steam_choice(&w.class, &w.caption),
             None => {
                 let launch = match &flatpak {
                     Some(id) => format!("flatpak run {id}"),
@@ -201,6 +202,49 @@ fn choice(d: &DesktopEntry, class: &str, caption: Option<&str>) -> AppChoice {
         match_,
         caption: caption.map(String::from),
     }
+}
+
+/// The Steam app ID in a game window's class, `steam_app_2357570` → `2357570`.
+fn steam_app_id(class: &str) -> Option<&str> {
+    class.strip_prefix("steam_app_").filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A Steam game, named from its library manifest (`Overwatch®` → `overwatch`).
+fn steam_choice(class: &str, caption: &str) -> AppChoice {
+    let id = steam_app_id(class).unwrap_or_default();
+    let label = steam_game_name(id).unwrap_or_else(|| format!("Steam game {id}"));
+    let name: String = label.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    AppChoice {
+        label: format!("{label} (Steam)"),
+        name: if name.is_empty() { format!("steam{id}") } else { name },
+        class: class.into(),
+        launch: format!("steam steam://rungameid/{id}"),
+        match_: vec![class.to_lowercase()],
+        caption: Some(caption.into()),
+    }
+}
+
+/// The game's name from `appmanifest_<id>.acf` in any Steam library.
+fn steam_game_name(id: &str) -> Option<String> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let steam = [".local/share/Steam", ".steam/steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
+        .map(|p| home.join(p));
+    let mut libraries: Vec<std::path::PathBuf> = steam.to_vec();
+    for root in &steam {
+        if let Ok(vdf) = std::fs::read_to_string(root.join("steamapps/libraryfolders.vdf")) {
+            libraries.extend(vdf.lines().filter_map(|l| vdf_value(l, "path")).map(std::path::PathBuf::from));
+        }
+    }
+    libraries.iter().find_map(|lib| {
+        let acf = std::fs::read_to_string(lib.join(format!("steamapps/appmanifest_{id}.acf"))).ok()?;
+        acf.lines().find_map(|l| vdf_value(l, "name")).filter(|n| !n.is_empty())
+    })
+}
+
+/// `"key"\t\t"value"` → `value`, for one line of a Valve KeyValues file.
+fn vdf_value(line: &str, key: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix(&format!("\"{key}\""))?.trim();
+    Some(rest.strip_prefix('"')?.strip_suffix('"')?.replace("\\\\", "\\"))
 }
 
 /// `org.kde.dolphin` → `dolphin`, `com.discordapp.Discord` → `discord`.
@@ -261,6 +305,14 @@ mod tests {
             "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=com.discordapp.Discord com.discordapp.Discord"
         );
         assert_eq!(strip_field_codes("app --rate 100%%"), "app --rate 100%");
+    }
+
+    #[test]
+    fn reads_steam_manifest_lines() {
+        assert_eq!(steam_app_id("steam_app_2357570"), Some("2357570"));
+        assert_eq!(steam_app_id("steam_app_"), None);
+        assert_eq!(vdf_value("\t\"name\"\t\t\"Overwatch®\"", "name").as_deref(), Some("Overwatch®"));
+        assert_eq!(vdf_value("\t\"appid\"\t\t\"2357570\"", "name"), None);
     }
 
     #[test]

@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 /// How often held keys are polled while the window is open (~60 Hz).
 const POLL: Duration = Duration::from_millis(16);
+/// Check the board's base layer every this many key polls (~300 ms).
+const LAYER_EVERY: u32 = 20;
 
 /// An open keyboard plus its matrix size, shared by commands and the key watcher so
 /// only one request is in flight on the device at a time.
@@ -23,7 +25,13 @@ struct Open {
     via: Via,
     rows: u8,
     cols: u8,
+    /// Keychron per-key RGB: LED count and matrix → LED map, read on first use
+    /// (`Some(None)`: the firmware doesn't have it).
+    leds: Option<Option<Leds>>,
 }
+
+/// LED count and matrix `[row][col]` → LED index.
+type Leds = (u8, Vec<Vec<Option<u8>>>);
 
 #[derive(Default)]
 struct AppState {
@@ -63,7 +71,16 @@ struct KeyboardInfo {
     layers: Vec<Vec<Vec<Keycode>>>,
     /// `[layer][knob]` → (left, right)
     encoders: Vec<Vec<(Keycode, Keycode)>>,
+    /// The layer the board is on (Keychron's Mac/Windows switch); None when its
+    /// firmware doesn't say.
+    base_layer: Option<u8>,
     error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct BaseLayer {
+    path: String,
+    layer: u8,
 }
 
 #[derive(Clone, Serialize)]
@@ -98,6 +115,7 @@ async fn keyboards(state: State<'_, AppState>) -> Result<Vec<KeyboardInfo>, Stri
             definition: None,
             layers: vec![],
             encoders: vec![],
+            base_layer: None,
             error: None,
         };
         let def = match Definition::load(device.vendor_id, device.product_id, &paths.layouts, &paths.layout_cache, true)
@@ -115,10 +133,12 @@ async fn keyboards(state: State<'_, AppState>) -> Result<Vec<KeyboardInfo>, Stri
             let protocol = via.protocol_version()?;
             let keymap = via.keymap(def.rows, def.cols)?;
             let encoders = via.encoders(keymap.len() as u8, def.encoder_count())?;
-            Ok((via, protocol, keymap, encoders))
+            let base_layer = via.keychron_layers()?.map(|l| l.0);
+            Ok((via, protocol, keymap, encoders, base_layer))
         };
         match read() {
-            Ok((via, protocol, keymap, encoders)) => {
+            Ok((via, protocol, keymap, encoders, base_layer)) => {
+                info.base_layer = base_layer;
                 let name = |c: u16| decode(c, &def.custom_keycodes);
                 info.protocol = Some(protocol);
                 info.layers =
@@ -126,7 +146,7 @@ async fn keyboards(state: State<'_, AppState>) -> Result<Vec<KeyboardInfo>, Stri
                 info.encoders =
                     encoders.iter().map(|l| l.iter().map(|(ccw, cw)| (name(*ccw), name(*cw))).collect()).collect();
                 remember_knob_keys(&state, &path, &encoders);
-                state.keyboards.lock().unwrap().insert(path, Open { via, rows: def.rows, cols: def.cols });
+                state.keyboards.lock().unwrap().insert(path, Open { via, rows: def.rows, cols: def.cols, leds: None });
             }
             Err(e) => info.error = Some(e.to_string()),
         }
@@ -196,7 +216,11 @@ struct Mouse {
 /// Some devices expose several nodes for one piece of hardware (the Steam
 /// Controller Puck has one per controller slot); they're grouped into one entry.
 #[tauri::command]
-fn mice() -> Vec<Mouse> {
+async fn mice() -> Vec<Mouse> {
+    list_mice()
+}
+
+fn list_mice() -> Vec<Mouse> {
     let keyboards: HashSet<(u16, u16)> = discover().iter().map(|d| (d.vendor_id, d.product_id)).collect();
     let mut out: Vec<Mouse> = Vec::new();
     for d in delta_input::list() {
@@ -269,13 +293,23 @@ fn watch_keys(app: AppHandle, state: State<'_, AppState>, path: String) {
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
         let mut last: Option<Vec<(u8, u8)>> = None;
+        // The Mac/Windows switch, checked every LAYER_EVERY polls
+        let mut last_layer: Option<u8> = None;
+        let mut tick = 0u32;
         while running.load(Ordering::Relaxed) {
-            let keys = {
+            let (keys, layer) = {
                 let mut boards = state.keyboards.lock().unwrap();
                 let Some(open) = boards.get_mut(&path) else { break };
                 let (rows, cols) = (open.rows, open.cols);
-                open.via.pressed(rows, cols)
+                let layer = tick.is_multiple_of(LAYER_EVERY).then(|| open.via.keychron_layers().ok().flatten()).flatten();
+                (open.via.pressed(rows, cols), layer)
             };
+            tick = tick.wrapping_add(1);
+            if let Some((base, _)) = layer
+                && last_layer.replace(base) != Some(base)
+            {
+                let _ = app.emit("base-layer", BaseLayer { path: path.clone(), layer: base });
+            }
             match keys {
                 Ok(keys) if last.as_ref() != Some(&keys) => {
                     let _ = app.emit("pressed", Pressed { path: path.clone(), keys: keys.clone() });
@@ -296,7 +330,7 @@ fn watch_keys(app: AppHandle, state: State<'_, AppState>, path: String) {
 /// The Delta config: delta.toml if it exists, otherwise a preview of the legacy
 /// delta.conf (nothing is written).
 #[tauri::command]
-fn config() -> ConfigInfo {
+async fn config() -> ConfigInfo {
     let paths = Paths::from_env();
     let source = paths.config.display().to_string();
     if let Ok(text) = std::fs::read_to_string(&paths.config) {
@@ -330,7 +364,7 @@ fn config() -> ConfigInfo {
 /// Validate and save the config edited in the app. deltad (if running) notices the
 /// file change and applies it within a second.
 #[tauri::command]
-fn save_config(config: Config) -> Result<ConfigInfo, Vec<String>> {
+async fn save_config(config: Config) -> Result<ConfigInfo, Vec<String>> {
     let paths = Paths::from_env();
     match config.save(&paths.config) {
         Ok(()) => Ok(ConfigInfo {
@@ -344,6 +378,125 @@ fn save_config(config: Config) -> Result<ConfigInfo, Vec<String>> {
     }
 }
 
+/// What the keyboard's LEDs show right now, read back from it.
+#[derive(Serialize)]
+struct KeyboardLighting {
+    effect: u8,
+    brightness: u8,
+    /// Every key's colour when one colour covers the board (solid, breathing, off).
+    all: Option<String>,
+    /// `"row,col"` → `#RRGGBB` in Per Key RGB, per-key brightness applied (the
+    /// keyboard's own brightness isn't).
+    keys: HashMap<String, String>,
+    /// An animated effect Delta can't draw.
+    animated: bool,
+}
+
+/// Keychron's Per Key RGB effect number in this firmware (see deltad's highlighter).
+const PER_KEY_EFFECT: u8 = 23;
+
+/// What the keyboard's LEDs show now. Like every command that touches hardware or
+/// files, it's `async` so it runs off the window's thread (plain `fn` commands run on
+/// it and stall the UI while they wait).
+#[tauri::command]
+async fn keyboard_lighting(state: State<'_, AppState>, path: String) -> Result<KeyboardLighting, String> {
+    use delta_core::lighting::to_hex;
+    use delta_via::Hsv;
+    let mut boards = state.keyboards.lock().unwrap();
+    let open = boards.get_mut(&path).ok_or("keyboard not open")?;
+    let err = |e: delta_via::ViaError| e.to_string();
+    if open.leds.is_none() {
+        let leds = match open.via.keychron_rgb().map_err(err)? {
+            Some(n) => Some((n, open.via.led_map(open.rows, open.cols).map_err(err)?)),
+            None => None,
+        };
+        open.leds = Some(leds);
+    }
+    let l = open.via.lighting().map_err(err)?;
+    let mut out =
+        KeyboardLighting { effect: l.effect, brightness: l.brightness, all: None, keys: HashMap::new(), animated: false };
+    match l.effect {
+        0 => out.all = Some("#000000".into()),
+        1 | 2 => out.all = Some(to_hex(Hsv { h: l.hue, s: l.sat, v: 255 }.to_rgb())),
+        PER_KEY_EFFECT => {
+            if let Some(Some((count, map))) = &open.leds {
+                let colors = open.via.per_key_colors(*count).map_err(err)?;
+                for (r, row) in map.iter().enumerate() {
+                    for (c, led) in row.iter().enumerate() {
+                        if let Some(hsv) = led.and_then(|i| colors.get(i as usize)) {
+                            out.keys.insert(format!("{r},{c}"), to_hex(hsv.to_rgb()));
+                        }
+                    }
+                }
+            }
+        }
+        _ => out.animated = true,
+    }
+    Ok(out)
+}
+
+/// Ask deltad to show a lighting profile being edited (JSON), or stop with "".
+#[tauri::command]
+async fn preview_lighting(profile: String) -> Result<(), String> {
+    let conn = zbus::Connection::session().await.map_err(|e| e.to_string())?;
+    conn.call_method(
+        Some("org.seglectic.Delta"),
+        "/org/seglectic/Delta",
+        Some("org.seglectic.Delta1"),
+        "PreviewLighting",
+        &(profile,),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Ask deltad to loop a key effect being edited (JSON), or stop with "".
+#[tauri::command]
+async fn preview_effect(effect: String) -> Result<(), String> {
+    let conn = zbus::Connection::session().await.map_err(|e| e.to_string())?;
+    conn.call_method(
+        Some("org.seglectic.Delta"),
+        "/org/seglectic/Delta",
+        Some("org.seglectic.Delta1"),
+        "PreviewEffect",
+        &(effect,),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Colours the keys get while the delta key is held, for the Caps-layer preview.
+#[derive(Serialize)]
+struct DeltaColors {
+    /// Binding ID → `#RRGGBB`
+    bindings: HashMap<String, String>,
+    background: String,
+    delta_key: String,
+}
+
+#[tauri::command]
+async fn delta_colors(config: Config) -> DeltaColors {
+    use delta_core::lighting::{self, to_hex};
+    DeltaColors {
+        bindings: lighting::lit_bindings(&config)
+            .map(|b| (b.id.clone(), to_hex(lighting::binding_color(&config, b))))
+            .collect(),
+        background: to_hex(lighting::background(&config)),
+        delta_key: to_hex(lighting::DELTA_KEY),
+    }
+}
+
+/// Cheap fingerprint of the plugged-in keyboards and mice, polled so the window can
+/// re-read when something is plugged in or out.
+#[tauri::command]
+async fn devices_signature() -> String {
+    let mut ids: Vec<String> = discover().iter().map(|d| d.path.display().to_string()).collect();
+    ids.extend(list_mice().iter().map(|m| format!("{:04x}:{:04x}", m.vendor_id, m.product_id)));
+    ids.join(",")
+}
+
 /// KDE global shortcuts, for the "KDE shortcut" action picker.
 #[tauri::command]
 async fn shortcuts() -> Result<Vec<delta_core::system::Shortcut>, String> {
@@ -352,7 +505,7 @@ async fn shortcuts() -> Result<Vec<delta_core::system::Shortcut>, String> {
 
 /// Installed apps (from .desktop files), for the "only in this app" picker.
 #[tauri::command]
-fn app_suggestions() -> Vec<delta_core::apps::AppChoice> {
+async fn app_suggestions() -> Vec<delta_core::apps::AppChoice> {
     delta_core::apps::installed_apps()
 }
 
@@ -400,7 +553,12 @@ pub fn run() {
             shortcuts,
             app_suggestions,
             running_apps,
-            deltad_status
+            deltad_status,
+            delta_colors,
+            devices_signature,
+            keyboard_lighting,
+            preview_lighting,
+            preview_effect
         ])
         .run(tauri::generate_context!())
         .expect("error while running Delta");

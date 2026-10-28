@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { Binding, Keycode, KeyboardInfo, PhysicalKey } from "./types";
   import { bindingsFor, deltaKeyName, describeAction, qmkName, whenText } from "./bindings";
 
@@ -13,9 +14,12 @@
     onadd: (keyName: string) => void;
     onedit: (binding: Binding) => void;
     onremove: (binding: Binding) => void;
+    /** A third column: the key's lighting. */
+    lighting?: Snippet;
   }
 
-  let { key, keyboard, layerNames, baseLayer, bindings, modifierKey, onadd, onedit, onremove }: Props = $props();
+  let { key, keyboard, layerNames, baseLayer, bindings, modifierKey, onadd, onedit, onremove, lighting }: Props =
+    $props();
 
   const perLayer = $derived(keyboard.layers.map((l) => l[key.row]?.[key.col]));
   const turns = $derived(key.encoder !== null ? keyboard.encoders.map((l) => l[key.encoder!]) : []);
@@ -46,7 +50,7 @@
     </span>
   </header>
 
-  <div class="columns">
+  <div class="columns" class:three={!!lighting}>
     <div>
       <h3>Firmware</h3>
       <table>
@@ -99,6 +103,7 @@
         </div>
       {/each}
     </div>
+    {#if lighting}{@render lighting()}{/if}
   </div>
 </section>
 
@@ -134,6 +139,9 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
     gap: 24px;
+  }
+  .columns.three {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
   }
   table {
     border-collapse: collapse;

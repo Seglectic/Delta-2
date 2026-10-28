@@ -373,6 +373,14 @@ workspace.windowAdded.connect(function(window) {
     }
 });
 
+// Tell deltad which window has focus, for per-app lighting
+function reportFocus(w) {
+    callDBus("org.seglectic.Delta", "/org/seglectic/Delta", "org.seglectic.Delta1", "FocusChanged",
+             w ? "" + (w.resourceClass || "") : "", w ? "" + (w.desktopFileName || "") : "");
+}
+workspace.windowActivated.connect(reportFocus);
+reportFocus(workspace.activeWindow);
+
 registerShortcut("DeltaTileLeft", "Delta: DeltaTileLeft", "Ctrl+Alt+Meta+A", function() { tileIntoLayout("thirds_right", "left"); });
 registerShortcut("DeltaTileRight", "Delta: DeltaTileRight", "Ctrl+Alt+Meta+D", function() { tileIntoLayout("thirds_left", "right"); });
 registerShortcut("DeltaTileLeft3", "Delta: DeltaTileLeft3", "Ctrl+Alt+Meta+Q", function() { tileIntoLayout("thirds_left", "left"); });

@@ -98,12 +98,102 @@ pub struct Lighting {
     /// highlighting. Unset: leave whatever the keyboard has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal: Option<NormalLighting>,
+    /// `#RRGGBB` for keys with no Caps-layer action while highlighting. Unset: off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_background: Option<String>,
+    /// Per-key colours: one profile for everywhere (no `app`) and one per app, used
+    /// while that app has focus.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<LightingProfile>,
+    /// Animations played when a key is pressed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<KeyEffect>,
 }
 
 impl Default for Lighting {
     fn default() -> Self {
-        Self { caps_highlight: true, normal: None }
+        Self { caps_highlight: true, normal: None, delta_background: None, profiles: vec![], effects: vec![] }
     }
+}
+
+/// A burst of light that spreads out from a key when another (or the same) key is
+/// pressed: a ring travelling outwards, fading as it goes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyEffect {
+    pub id: String,
+    /// An `[[apps]]` name: only while that app has focus. Unset: everywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// The key that starts it, as QMK names what it sends on the base layer (`KC_ENTER`).
+    pub trigger: String,
+    /// Where the burst comes from: a key name, or `"center"` for the middle of the
+    /// board. Unset: the trigger key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// `#RRGGBB` at the origin.
+    pub color: String,
+    /// `#RRGGBB` at the edge of the burst. Unset: `color` all the way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_end: Option<String>,
+    /// Peak brightness, 0–255.
+    #[serde(default = "full")]
+    pub strength: u8,
+    /// How far the ring travels, in key widths.
+    #[serde(default = "default_distance")]
+    pub distance: f32,
+    /// Ring thickness, in key widths.
+    #[serde(default = "default_width")]
+    pub width: f32,
+    #[serde(default = "default_duration")]
+    pub duration_ms: u32,
+    /// How quickly it dims while travelling: 0 none, 1 linear, higher sooner.
+    #[serde(default = "default_fade")]
+    pub fade: f32,
+}
+
+fn default_distance() -> f32 {
+    8.0
+}
+fn default_width() -> f32 {
+    1.5
+}
+fn default_duration() -> u32 {
+    600
+}
+fn default_fade() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightingProfile {
+    /// An `[[apps]]` name. Unset: everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// Keys not listed below. Unset: off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<KeyLight>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyLight>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyLight {
+    /// What the key sends on the base layer, as QMK names it (`KC_W`, `KC_LSFT`).
+    /// Unused for a profile's background.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// `#RRGGBB`
+    pub color: String,
+    /// 0–255, scaled by the keyboard's own brightness (needs Delta's firmware hook).
+    #[serde(default = "full")]
+    pub brightness: u8,
+}
+
+fn full() -> u8 {
+    255
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -355,6 +445,13 @@ impl Config {
         self.apps.iter().find(|a| a.name == name)
     }
 
+    /// The app a window belongs to, by the same rule as the KWin script: a match
+    /// string inside the window's class or desktop file name.
+    pub fn app_for_window(&self, class: &str, desktop: &str) -> Option<&App> {
+        let (class, desktop) = (class.to_lowercase(), desktop.to_lowercase());
+        self.apps.iter().find(|a| a.match_strings().iter().any(|m| class.contains(m) || desktop.contains(m)))
+    }
+
     /// Checks everything the generators rely on. Names end up inside generated
     /// JavaScript, YAML and unit files, so they're limited to safe characters
     /// rather than escaped.
@@ -457,6 +554,58 @@ impl Config {
             && parse_hex_color(&n.color).is_none()
         {
             problems.push("lighting.normal.color isn't a #RRGGBB colour".into());
+        }
+        if self.lighting.delta_background.as_deref().is_some_and(|c| parse_hex_color(c).is_none()) {
+            problems.push("lighting.delta_background isn't a #RRGGBB colour".into());
+        }
+        let mut effect_ids = std::collections::HashSet::new();
+        let qmk_name = |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || "_()|".contains(c));
+        for e in &self.lighting.effects {
+            let at = format!("lighting effect {:?}", e.id);
+            if e.id.is_empty() || !e.id.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c)) {
+                problems.push(format!("{at}: id may only use letters, digits, '_' and '-'"));
+            }
+            if !effect_ids.insert(&e.id) {
+                problems.push(format!("{at} is defined twice"));
+            }
+            if let Some(app) = &e.app
+                && self.app(app).is_none()
+            {
+                problems.push(format!("{at}: no [[apps]] entry named {app:?}"));
+            }
+            if !qmk_name(&e.trigger) || e.origin.as_deref().is_some_and(|o| o != "center" && !qmk_name(o)) {
+                problems.push(format!("{at}: keys are QMK keycodes like KC_ENTER (origin may be \"center\")"));
+            }
+            if parse_hex_color(&e.color).is_none() || e.color_end.as_deref().is_some_and(|c| parse_hex_color(c).is_none())
+            {
+                problems.push(format!("{at}: colours are #RRGGBB"));
+            }
+            if !(e.distance > 0.0 && e.width > 0.0 && e.fade >= 0.0 && e.duration_ms >= 50) {
+                problems.push(format!("{at}: distance and width must be > 0, fade >= 0, duration at least 50 ms"));
+            }
+        }
+        let mut profile_apps = std::collections::HashSet::new();
+        for p in &self.lighting.profiles {
+            let at = match &p.app {
+                Some(app) => format!("lighting profile {app:?}"),
+                None => "lighting profile (everywhere)".into(),
+            };
+            if !profile_apps.insert(p.app.clone()) {
+                problems.push(format!("{at} is defined twice"));
+            }
+            if let Some(app) = &p.app
+                && self.app(app).is_none()
+            {
+                problems.push(format!("{at}: no [[apps]] entry named {app:?}"));
+            }
+            for k in p.background.iter().chain(&p.keys) {
+                if parse_hex_color(&k.color).is_none() {
+                    problems.push(format!("{at}: {:?} colour isn't #RRGGBB", k.key));
+                }
+            }
+            if p.keys.iter().any(|k| k.key.is_empty() || !k.key.chars().all(|c| c.is_ascii_alphanumeric() || "_()|".contains(c))) {
+                problems.push(format!("{at}: key names are QMK keycodes like KC_W"));
+            }
         }
 
         for o in &self.overrides {

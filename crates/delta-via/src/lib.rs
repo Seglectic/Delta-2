@@ -6,6 +6,6 @@ pub mod keycode;
 pub mod layout;
 pub mod protocol;
 
-pub use device::{Via, ViaDevice, ViaError, discover};
+pub use device::{LightingState, Via, ViaDevice, ViaError, discover};
 pub use layout::{Definition, PhysicalKey};
 pub use protocol::{Hsv, LightingCommand};

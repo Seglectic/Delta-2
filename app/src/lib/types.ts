@@ -42,7 +42,14 @@ export interface KeyboardInfo {
   layers: Keycode[][][];
   /** [layer][knob] → [left, right] */
   encoders: [Keycode, Keycode][][];
+  /** The layer the board is on (Keychron's Mac/Windows switch); null when it doesn't say. */
+  base_layer: number | null;
   error: string | null;
+}
+
+export interface BaseLayer {
+  path: string;
+  layer: number;
 }
 
 export interface Pressed {
@@ -104,9 +111,72 @@ export interface Config {
   lighting?: {
     caps_highlight?: boolean;
     normal?: { effect: number; color: string; brightness: number };
+    /** #RRGGBB for keys without a Caps-layer action; unset = off. */
+    delta_background?: string;
+    profiles?: LightingProfile[];
+    effects?: KeyEffect[];
   };
   // Other sections are passed through untouched
   [section: string]: unknown;
+}
+
+/** One key's light in a profile. */
+export interface KeyLight {
+  /** QMK name of what the key sends on the base layer, e.g. KC_W. Empty for a background. */
+  key: string;
+  color: string;
+  /** 0–255 */
+  brightness: number;
+}
+
+/** Per-key colours, for one app (`app`) or everywhere else. */
+export interface LightingProfile {
+  app?: string;
+  /** Keys not listed; unset = off. */
+  background?: KeyLight;
+  keys?: KeyLight[];
+}
+
+/** A burst that spreads out when `trigger` is pressed (`[[lighting.effects]]`). */
+export interface KeyEffect {
+  id: string;
+  /** Only while this app has focus; unset = everywhere. */
+  app?: string;
+  /** QMK name on the base layer, e.g. KC_ENTER. */
+  trigger: string;
+  /** A key name or "center"; unset = the trigger key. */
+  origin?: string;
+  color: string;
+  color_end?: string;
+  /** Peak brightness 0–255. */
+  strength: number;
+  /** How far it travels, in key widths. */
+  distance: number;
+  /** Ring thickness, in key widths. */
+  width: number;
+  duration_ms: number;
+  /** 0 = no dimming while travelling, 1 = linear, more = sooner. */
+  fade: number;
+}
+
+/** What the keyboard's LEDs show right now (read back from it). */
+export interface KeyboardLighting {
+  effect: number;
+  brightness: number;
+  /** One colour for every key (solid, breathing, off). */
+  all: string | null;
+  /** "row,col" → colour, in Per Key RGB. */
+  keys: Record<string, string>;
+  /** An animation Delta can't draw. */
+  animated: boolean;
+}
+
+/** What each key lights up as while the delta key is held (#RRGGBB). */
+export interface DeltaColors {
+  /** Binding ID → colour */
+  bindings: Record<string, string>;
+  background: string;
+  delta_key: string;
 }
 
 export interface ConfigInfo {
