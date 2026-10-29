@@ -239,6 +239,12 @@ impl ReadCommand {
 
 fn echo_len(p: &[u8]) -> usize {
     match p[0] {
+        // Where in the keymap / macros the reply is from: deltad and the app read the
+        // same keyboard at the same time, and each sees the other's replies
+        id::DYNAMIC_KEYMAP_GET_BUFFER
+        | id::DYNAMIC_KEYMAP_MACRO_GET_BUFFER
+        | id::DYNAMIC_KEYMAP_GET_KEYCODE
+        | id::DYNAMIC_KEYMAP_GET_ENCODER => 4,
         id::CUSTOM_GET_VALUE | id::CUSTOM_SET_VALUE => 3,
         id::KC_KEYCHRON_RGB | id::GET_KEYBOARD_VALUE => 2,
         _ => 1,
@@ -454,6 +460,7 @@ mod tests {
 
     #[test]
     fn buffer_reads_are_capped_to_one_report() {
+        assert_eq!(ReadCommand::KeymapBuffer { offset: 0x0102, size: 28 }.echo_len(), 4, "offset tells chunks apart");
         let r = ReadCommand::KeymapBuffer { offset: 0x0102, size: 200 }.encode();
         assert_eq!(&r[..4], &[0x12, 0x01, 0x02, MAX_BUFFER_CHUNK]);
     }
