@@ -494,6 +494,7 @@ impl Config {
             std::fs::create_dir_all(dir).map_err(err)?;
         }
         let text = format!("{SAVED_HEADER}{}", self.to_toml());
+        keep_history(path);
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)).map_err(err)
     }
@@ -768,4 +769,32 @@ fn is_app_name(s: &str) -> bool {
 
 fn is_chord(s: &str) -> bool {
     !s.is_empty() && s.split('+').all(is_key_name)
+}
+
+/// Saved configs kept next to the file, newest last.
+pub const HISTORY_KEEP: usize = 100;
+
+/// Copy the config at `path` (as it is before a save) to `history/<unix ms>.toml`
+/// beside it, keeping the newest `HISTORY_KEEP`. Best effort: a failure never stops
+/// the save.
+pub fn keep_history(path: &Path) {
+    let Ok(old) = std::fs::read(path) else { return };
+    let Some(dir) = path.parent().map(|d| d.join("history")) else { return };
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    if std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(format!("{ms}.toml")), old)).is_err() {
+        return;
+    }
+    let mut saved: Vec<_> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .collect();
+    saved.sort();
+    for old in saved.iter().rev().skip(HISTORY_KEEP) {
+        let _ = std::fs::remove_file(old);
+    }
 }

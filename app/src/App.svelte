@@ -61,6 +61,7 @@
   /** A newer release on GitHub (released builds only). */
   let update = $state<Update | null>(null);
   let updating = $state<string | null>(null);
+  let updateOpen = $state(false);
   let configInfo = $state<ConfigInfo | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -438,6 +439,11 @@
   }
 
   async function save(config: Config): Promise<boolean> {
+    // Never save over a config that didn't load: the fallback would wipe the file
+    if (!configInfo?.config) {
+      editorProblems = ["delta.toml didn't load, so nothing was saved; fix it first"];
+      return false;
+    }
     saving = true;
     try {
       configInfo = await invoke<ConfigInfo>("save_config", { config });
@@ -700,12 +706,6 @@
   {:else if setup?.needs_relogin}
     <p class="banner setup">Permissions are set up. Log out and back in so they apply to this session.</p>
   {/if}
-  {#if update}
-    <div class="banner setup">
-      <span>Delta {update.version} is out (you have {update.currentVersion}).{update.body ? ` ${update.body}` : ""}</span>
-      <button onclick={installUpdate} disabled={!!updating}>{updating ?? "Update and restart"}</button>
-    </div>
-  {/if}
   {#if setup?.install_error}
     <p class="banner error">Couldn't install deltad: {setup.install_error}</p>
   {/if}
@@ -864,7 +864,13 @@
               {saving}
               onsave={async (lighting) => {
                 const config = editableConfig();
-                config.lighting = lighting;
+                // The panel only owns these fields; profiles and effects must survive
+                config.lighting = {
+                  ...config.lighting,
+                  normal: undefined,
+                  delta_background: undefined,
+                  ...lighting,
+                };
                 if (!(await save(config))) error = editorProblems.join("; ");
               }}
             />
@@ -898,6 +904,18 @@
   {/if}
 
   <footer>
+    {#if update}
+      <div class="update">
+        {#if updateOpen}
+          <div class="update-pop" role="dialog" aria-label="Update">
+            <span><code>{update.currentVersion}</code> → <code>{update.version}</code></span>
+            <button class="primary" onclick={installUpdate} disabled={!!updating}>{updating ?? "Update"}</button>
+            <button class="link" onclick={() => (updateOpen = false)} disabled={!!updating}>later</button>
+          </div>
+        {/if}
+        <button class="update-dot" title="Update available" onclick={() => (updateOpen = !updateOpen)}>!</button>
+      </div>
+    {/if}
     <button class="link" onclick={() => (showLayouts = true)}>Layouts…</button>
     {#if setup}
       <span title={setup.owner.kind === "other" ? `deltad.service runs ${setup.owner.exec}` : ""}>
@@ -1110,6 +1128,51 @@
   }
   .hint {
     margin: 0;
+  }
+  .update {
+    position: relative;
+    display: flex;
+  }
+  .update-dot {
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border-radius: 50%;
+    border: none;
+    background: var(--peach);
+    color: var(--crust);
+    font-weight: 700;
+    font-size: 11px;
+    line-height: 16px;
+    cursor: pointer;
+  }
+  .update-pop {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--mantle);
+    border: 1px solid var(--surface1);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .update-pop .primary {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: var(--crust);
+  }
+  footer .update-pop .link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--overlay1);
+    cursor: pointer;
+    font: inherit;
   }
   footer .link {
     background: none;

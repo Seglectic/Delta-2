@@ -321,3 +321,21 @@ fn tap_dance_rules() {
     assert_eq!(toml.matches("taps = ").count(), 3, "{toml}");
     assert_eq!(Config::from_toml(&toml).unwrap(), config);
 }
+
+#[test]
+fn saving_keeps_the_previous_config() {
+    let dir = std::env::temp_dir().join(format!("delta-history-{}", std::process::id()));
+    let path = dir.join("delta.toml");
+    let mut config = Config::from_toml(TAP_DANCE).unwrap();
+    config.save(&path).unwrap();
+    let history = || std::fs::read_dir(dir.join("history")).map_or(0, |d| d.count());
+    assert_eq!(history(), 0, "nothing to keep on the first save");
+    let first = std::fs::read_to_string(&path).unwrap();
+    config.engine.tap_ms = 300;
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    config.save(&path).unwrap();
+    assert_eq!(history(), 1);
+    let kept = std::fs::read_dir(dir.join("history")).unwrap().next().unwrap().unwrap().path();
+    assert_eq!(std::fs::read_to_string(kept).unwrap(), first);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

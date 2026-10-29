@@ -144,6 +144,7 @@ impl Delta {
         let config = Config::from_toml(&toml).map_err(|e| fdo::Error::InvalidArgs(e.to_string()))?;
         config.validate().map_err(|p| fdo::Error::InvalidArgs(p.to_string()))?;
 
+        delta_core::config::keep_history(&self.paths.config);
         // Write via a temp file so a half-written config is never picked up
         let tmp = self.paths.config.with_extension("toml.tmp");
         std::fs::write(&tmp, &toml)
